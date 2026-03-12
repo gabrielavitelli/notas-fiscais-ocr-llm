@@ -136,6 +136,9 @@ STYLE = """
   .nf-upload-hero .cloud { font-size: 2.5rem; margin-bottom: 0.5rem; }
   .nf-sidebar-footer { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #E2E8F0; font-size: 0.8rem; color: #000000; }
   .nf-header-right { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+  /* Menu lateral: mais espaço e destaque no item ativo */
+  section[data-testid="stSidebar"] [data-testid="stRadio"] > label { padding: 0.5rem 0.75rem !important; border-radius: 8px !important; }
+  section[data-testid="stSidebar"] [data-testid="stRadio"] > label:hover { background: rgba(37, 99, 235, 0.08) !important; }
 </style>
 """
 
@@ -268,9 +271,19 @@ def render_sidebar():
     with st.sidebar:
         st.markdown("### Navegação")
         st.markdown("---")
-        pages = ["Upload", "Revisar", "Configurações", "Sobre"]
-        page = st.radio("Menu", options=pages, key="sidebar_nav", label_visibility="collapsed")
-        st.session_state.page = "Início" if page == "Upload" else page
+        pages = ["☁️ Upload", "⚠️ Revisar", "⚙️ Configurações", "ℹ️ Sobre"]
+        page_to_index = {"Início": 0, "Revisar": 1, "Configurações": 2, "Sobre": 3}
+        current = st.session_state.get("page", "Início")
+        idx = page_to_index.get(current, 0)
+        page = st.radio("Menu", options=pages, index=idx, key="sidebar_nav", label_visibility="collapsed")
+        if "Upload" in page:
+            st.session_state.page = "Início"
+        elif "Revisar" in page:
+            st.session_state.page = "Revisar"
+        elif "Configurações" in page:
+            st.session_state.page = "Configurações"
+        else:
+            st.session_state.page = "Sobre"
         st.markdown("---")
         st.markdown('<div class="nf-sidebar-footer">**Notas Fiscais BR**<br>Extração estruturada com OCR + IA</div>', unsafe_allow_html=True)
 
@@ -397,7 +410,7 @@ def page_inicio():
     metrics = st.session_state.get("metrics", {})
     processing = st.session_state.get("processing", [])
 
-    col_main, col_right = st.columns([3, 1])
+    col_main, col_right = st.columns([4, 1])
     with col_main:
         st.markdown('<div class="nf-card-panel"><h4>📊 Métricas do sistema</h4>', unsafe_allow_html=True)
         c1, c2, c3, c4, c5 = st.columns(5)
@@ -425,7 +438,7 @@ def page_inicio():
             key="uploader_main",
             label_visibility="visible",
         )
-        st.caption("PDF, PNG, JPG, JPEG – até 200 MB por arquivo")
+        st.caption("Formatos aceitos: PDF, PNG, JPG, JPEG · Máximo 200 MB por arquivo")
         st.markdown("</div>", unsafe_allow_html=True)
 
         if uploaded:
@@ -454,20 +467,23 @@ def page_inicio():
                     st.rerun()
 
     with col_right:
-        st.markdown('<div class="nf-card-panel"><h4>Atividade recente</h4>', unsafe_allow_html=True)
-        for item in (processing[-6:])[::-1]:
-            name = item.get("name", "?")
-            status = item.get("status", "Enviado")
-            st.caption(f"📄 {name} — **{status}**")
-        if processing:
-            st.caption("Ver todas >")
+        st.markdown('<div class="nf-card-panel"><h4>📋 Atividade recente</h4>', unsafe_allow_html=True)
+        recent = (processing[-6:])[::-1]
+        if recent:
+            for item in recent:
+                name = item.get("name", "?")
+                status = item.get("status", "Enviado")
+                st.caption(f"📄 **{name}** — {status}")
+            st.caption("_Ver todas >_")
+        else:
+            st.caption("_Nenhum arquivo processado nesta sessão._")
         st.markdown("</div>", unsafe_allow_html=True)
-        st.markdown('<div class="nf-card-panel"><h4>Resumo do sistema</h4><p style="margin:0 0 0.5rem 0;font-size:0.85rem;color:#64748B;">Hoje</p>', unsafe_allow_html=True)
+        st.markdown('<div class="nf-card-panel"><h4>📈 Resumo do sistema</h4><p style="margin:0 0 0.5rem 0;font-size:0.85rem;color:#64748B;">Hoje</p>', unsafe_allow_html=True)
         m = st.session_state.get("metrics", {})
-        st.caption(f"{m.get('files_total', 0)} Arquivos processados")
-        st.caption(f"{m.get('avg_ocr_sec', 0)}s Tempo médio OCR")
-        st.caption(f"{m.get('success_rate', 100)}% Taxa de sucesso")
-        st.caption(f"{m.get('fields_detected', 12)} Campos detectados")
+        st.caption(f"**{m.get('files_total', 0)}** Arquivos processados")
+        st.caption(f"**{m.get('avg_ocr_sec', 0)}s** Tempo médio OCR")
+        st.caption(f"**{m.get('success_rate', 100)}%** Taxa de sucesso")
+        st.caption(f"**{m.get('fields_detected', 12)}** Campos detectados")
         st.markdown("</div>", unsafe_allow_html=True)
 
     with col_main:
@@ -503,7 +519,7 @@ def page_inicio():
         if results:
             st.markdown("---")
             st.markdown("#### 3️⃣ Resultados")
-            st.markdown("Use os **filtros** abaixo para refinar a tabela. Depois **exporte em CSV** se precisar.")
+            st.markdown("Filtre por **rubrica**, **data** ou **pesquisador**. Ao final, **exporte em CSV**.")
             df_full = results_to_dataframe(results)
 
             st.markdown("**🔍 Filtros**")
