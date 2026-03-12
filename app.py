@@ -239,7 +239,7 @@ def render_header():
     st.markdown(f"""
     <div class="nf-app-header">
       <div>
-        <h1 class="nf-app-title">📄 Notas Fiscai</h1>
+        <h1 class="nf-app-title">📄 Sistema para Cadastro de Notas Fiscais</h1>
         <p class="nf-app-desc">OCR + IA → extração estruturada de notas fiscais (PDF e imagens)</p>
       </div>
       <span class="nf-status">● Online</span>
