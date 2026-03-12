@@ -23,15 +23,7 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-# Na nuvem (Streamlit Cloud): chaves vêm de Secrets; no PC: .env
-try:
-    for k, v in (getattr(st, "secrets", None) or {}).items():
-        if isinstance(v, str) and str(k).isupper():
-            os.environ.setdefault(str(k), v)
-except Exception:
-    pass
-
-import nf_ocr
+# nf_ocr é importado só ao processar (evita travar o deploy com deps pesadas)
 
 VERSION = "1.0.0"
 LAST_UPDATE = "2025-03"
@@ -157,23 +149,20 @@ def _load_state():
         "log_duvidas_erros": [],
         "ultima_execucao": "",
     }
-    if not STATE_FILE.exists():
-        return out
     try:
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        out["lista_pesquisadores"] = data.get("lista_pesquisadores", []) or []
-        out["metrics"] = {**out["metrics"], **(data.get("metrics") or {})}
-        out["results"] = data.get("results", []) or []
-        out["csv_drive_path"] = (data.get("csv_drive_path") or "").strip()
-    except Exception:
-        pass
-    if LOG_DUVIDAS_FILE.exists():
-        try:
+        if STATE_FILE.exists():
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            out["lista_pesquisadores"] = data.get("lista_pesquisadores", []) or []
+            out["metrics"] = {**out["metrics"], **(data.get("metrics") or {})}
+            out["results"] = data.get("results", []) or []
+            out["csv_drive_path"] = (data.get("csv_drive_path") or "").strip()
+            out["ultima_execucao"] = (data.get("ultima_execucao") or "").strip()
+        if LOG_DUVIDAS_FILE.exists():
             with open(LOG_DUVIDAS_FILE, "r", encoding="utf-8") as f:
                 out["log_duvidas_erros"] = json.load(f)
-        except Exception:
-            pass
+    except Exception:
+        pass
     return out
 
 
@@ -215,10 +204,13 @@ def _append_log_duvida(tipo, arquivo, mensagem, detalhe=None):
 
 def init_session_state():
     if "results" not in st.session_state:
-        loaded = _load_state()
-        st.session_state.results = loaded["results"]
-        st.session_state.metrics = loaded["metrics"]
-        st.session_state.lista_pesquisadores = loaded["lista_pesquisadores"]
+        try:
+            loaded = _load_state()
+        except Exception:
+            loaded = {}
+        st.session_state.results = loaded.get("results", [])
+        st.session_state.metrics = loaded.get("metrics", {"files_total": 0, "avg_ocr_sec": 0, "success_rate": 100, "fields_detected": 12, "revisar": 0, "verificar": 0, "erros_total": 0})
+        st.session_state.lista_pesquisadores = loaded.get("lista_pesquisadores", [])
         st.session_state.csv_drive_path = loaded.get("csv_drive_path", "") or ""
         st.session_state.log_duvidas_erros = loaded.get("log_duvidas_erros", [])
         st.session_state.ultima_execucao = loaded.get("ultima_execucao", "") or ""
@@ -327,6 +319,7 @@ def run_processing(progress_placeholder):
             st.session_state.processing[i]["status"] = "OCR"
             t0 = time.time()
             try:
+                import nf_ocr
                 ok, dados = nf_ocr.processar_arquivo(
                     path, model, api_key, sheet_id=None, creds_path=None,
                     csv_path=str(csv_path), dry_run=False, nomes_pesquisadores=nomes_pesquisadores,
@@ -697,20 +690,31 @@ def page_sobre():
 
 def main():
     st.set_page_config(page_title="Registo Notas Fiscais", page_icon="📄", layout="wide", initial_sidebar_state="expanded")
+    # Secrets (Streamlit Cloud) após set_page_config para não quebrar a ordem exigida
+    try:
+        for k, v in (getattr(st, "secrets", None) or {}).items():
+            if isinstance(v, str) and str(k).isupper():
+                os.environ.setdefault(str(k), v)
+    except Exception:
+        pass
     inject_css()
-    init_session_state()
-    render_sidebar()
-    render_header()
-
-    page = st.session_state.get("page", "Início")
-    if page == "Início":
-        page_inicio()
-    elif page == "Revisar":
-        page_revisar()
-    elif page == "Configurações":
-        page_configuracoes()
-    else:
-        page_sobre()
+    try:
+        init_session_state()
+        render_sidebar()
+        render_header()
+        page = st.session_state.get("page", "Início")
+        if page == "Início":
+            page_inicio()
+        elif page == "Revisar":
+            page_revisar()
+        elif page == "Configurações":
+            page_configuracoes()
+        else:
+            page_sobre()
+    except Exception as e:
+        st.error(f"Erro ao carregar o app: {e}")
+        import traceback
+        st.code(traceback.format_exc())
 
 
 if __name__ == "__main__":
