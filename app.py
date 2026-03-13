@@ -362,12 +362,17 @@ def run_processing(progress_placeholder):
         model = carregar_modelo_doctr()
     except Exception as e:
         _ensure_dados_dir()
+        err_msg = str(e).strip() or repr(e)
         st.warning(
             "**DocTR não carregou** — o OCR não está disponível neste ambiente. "
             "**Onde os dados ficam:** CSV, estado e log são gravados na pasta **nf_dados/** (na mesma pasta do app). "
             "Para usar o OCR completo no seu PC: `pip install -r requirements-local.txt` e rode `streamlit run app.py` localmente. "
-            "Na nuvem o DocTR pode não estar instalado; você pode exportar CSV pelos resultados."
+            "Na nuvem você pode exportar CSV pelos resultados."
         )
+        with st.expander("Ver detalhes do erro (útil para diagnóstico)"):
+            st.code(err_msg, language="text")
+            import traceback
+            st.code(traceback.format_exc(), language="text")
         # Marca como erro e remove bytes para não ficar em loop "Processando..."
         st.session_state.processing[i]["status"] = "Erro: DocTR não carregou"
         st.session_state.processing[i].pop("bytes", None)

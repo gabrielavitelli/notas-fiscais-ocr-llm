@@ -6,7 +6,7 @@ Para o **Notas Fiscais** ficar acessível 24/7 pela internet, mesmo com o seu co
 
 ## Antes do deploy — checklist
 
-- [ ] **Não há `packages.txt`** no repositório (ele quebra o build; se existir: `git rm packages.txt` e push).
+- [ ] **`packages.txt`** está no repositório com `libgl1` (ajuda o DocTR a carregar na nuvem). Se o build do apt falhar, remova-o com `git rm packages.txt` e push.
 - [ ] **`.env` não vai para o GitHub** (já está no `.gitignore`; use **Secrets** no painel do Streamlit para chaves).
 - [ ] **`requirements.txt`** está na pasta do app (ou na raiz do repo) com as dependências; o primeiro build (DocTR + PyTorch) pode levar 5–15 min.
 - [ ] **Main file path** no Streamlit Cloud aponta para o arquivo certo (ex.: `app.py` ou `notas_fiscais/app.py` se estiver em subpasta).
@@ -110,16 +110,17 @@ HF_TOKEN = "hf_seu_token_aqui"
 
 ## packages.txt e build na nuvem
 
-**Se o build falhar com** `Package 'libgl1-mesa-glx' has no installation candidate`, é porque ainda existe **packages.txt** no repositório. Remova-o:
+O projeto usa **packages.txt** com `libgl1` (pacote disponível no Debian Trixie usado pelo Streamlit Cloud). Isso evita o erro "libGL.so.1: cannot open shared object file" ao carregar o DocTR/OpenCV.
+
+**Se o build falhar** ao instalar dependências do apt (por exemplo, "Package 'libgl1' has no installation candidate"), remova o arquivo e faça push:
 
 ```bash
-cd notas_fiscais
 git rm packages.txt
-git commit -m "Remove packages.txt para build na nuvem"
+git commit -m "Remove packages.txt (build sem libs do sistema)"
 git push origin main
 ```
 
-O `.gitignore` evita subir `packages.txt` de novo. Sem esse arquivo o build das dependências Python (DocTR, etc.) segue normalmente.
+Nesse caso o app sobe, mas o DocTR pode não carregar na nuvem (use o app no PC para OCR completo).
 
 ---
 
