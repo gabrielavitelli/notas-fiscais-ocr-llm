@@ -6,7 +6,7 @@ Para o **Notas Fiscais** ficar acessível 24/7 pela internet, mesmo com o seu co
 
 ## Antes do deploy — checklist
 
-- [ ] **Não inclua `packages.txt`** no repositório — em muitos ambientes do Streamlit Cloud o apt falha e o build quebra. Sem ele o app sobe; o DocTR pode não carregar na nuvem (use no PC para OCR completo).
+- [ ] **`packages.txt`** (com `libgl1-mesa-glx`) ajuda o DocTR a carregar na nuvem. Se aparecer **"Error installing requirements"**, abra **Manage app → Logs**: se o erro for do **apt** (ex.: "Package ... has no installation candidate"), edite `packages.txt` e troque para `libgl1` só, ou remova o arquivo (`git rm packages.txt`) e faça push.
 - [ ] **`.env` não vai para o GitHub** (já está no `.gitignore`; use **Secrets** no painel do Streamlit para chaves).
 - [ ] **`requirements.txt`** está na pasta do app (ou na raiz do repo) com as dependências; o primeiro build (DocTR + PyTorch) pode levar 5–15 min.
 - [ ] **Main file path** no Streamlit Cloud aponta para o arquivo certo (ex.: `app.py` ou `notas_fiscais/app.py` se estiver em subpasta).
@@ -108,11 +108,12 @@ HF_TOKEN = "hf_seu_token_aqui"
 
 ---
 
-## packages.txt e build na nuvem
+## packages.txt e DocTR na nuvem
 
-**Não use `packages.txt`** no repositório. Em vários ambientes do Streamlit Cloud a instalação de pacotes apt falha ("Error installing requirements") e o build não conclui. Sem esse arquivo, as dependências Python (Streamlit, DocTR, PyTorch, etc.) instalam normalmente e o app sobe.
+O **DocTR** (OCR) usa OpenCV, que em servidor Linux pode precisar da biblioteca **OpenGL** do sistema (`libGL`). O **packages.txt** deve ter **só o nome do pacote**, uma linha, **sem comentários** (o instalador trata cada linha como pacote).
 
-Na nuvem o **DocTR pode não carregar** (erro "DocTR não carregou" ao processar) por falta de bibliotecas do sistema; use o app **no seu PC** com `pip install -r requirements-local.txt` e `streamlit run app.py` para OCR completo. Na nuvem você pode usar o app para exportar CSV e consultar dados.
+- O repositório já traz `packages.txt` com **`libgl1`** (válido no Debian Trixie usado pelo Streamlit Cloud).
+- Se ainda aparecer **"Error installing requirements"** nos Logs, remova o arquivo: `git rm packages.txt`, commit e push. Sem ele o app sobe, mas o DocTR pode não carregar na nuvem (use no PC para OCR completo).
 
 ---
 
