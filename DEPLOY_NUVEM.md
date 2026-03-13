@@ -89,6 +89,7 @@ HF_TOKEN = "hf_seu_token_aqui"
 ### 6. Usar o app
 
 - A URL será algo como: `https://seu-app.streamlit.app`.
+- **Primeiro deploy:** a instalação do DocTR + PyTorch (CPU) pode levar **5–15 minutos**. Se aparecer "Error installing requirements", espere o build terminar ou confira os **Logs** no "Manage app". O app usa PyTorch em versão CPU para caber no build.
 - Abra no celular ou em qualquer PC; funciona com o **seu PC desligado**.
 - Em **Configurações**, deixe o **“Caminho do arquivo CSV”** em branco (planilha no Drive não existe na nuvem).
 - Use **Exportar CSV** para baixar os dados quando precisar.

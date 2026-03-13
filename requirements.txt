@@ -1,10 +1,14 @@
-# OCR (opencv-headless evita libGL em servidor/nuvem; packages.txt adiciona libgl1 se necessário)
-opencv-python-headless>=4.8.0
-python-doctr[torch]>=0.7.0
+# PyTorch CPU (menor que CUDA; necessário para DocTR na nuvem)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.0.0,<2.4
+torchvision>=0.15.0
 
-# LLM — Groq (grátis) ou Hugging Face (grátis) ou transformers (local)
-openai>=1.0.0         # usado para Groq e HF (API compatível)
-# transformers torch   # opcional: LLM local (pip install transformers torch)
+# OCR DocTR (usa torch acima)
+opencv-python-headless>=4.8.0
+python-doctr>=0.7.0
+
+# LLM — Groq ou Hugging Face
+openai>=1.0.0
 
 # Google Sheets
 gspread>=6.0.0
@@ -13,9 +17,7 @@ google-auth>=2.0.0
 # PDF/imagem
 Pillow>=10.0.0
 
-# Interface web (local, sem Google Cloud)
+# Interface
 streamlit>=1.28.0
 pandas>=2.0.0
-
-# Carregar chaves do arquivo .env (configuração fixa)
 python-dotenv>=1.0.0

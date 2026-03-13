@@ -300,7 +300,7 @@ def run_processing(progress_placeholder):
     try:
         model = carregar_modelo_doctr()
     except Exception as e:
-        st.error(f"Erro ao carregar modelo DocTR: {e}. Instale: pip install python-doctr torch")
+        st.error(f"Erro ao carregar modelo DocTR: {e}. Verifique se estão instalados: pip install python-doctr torch opencv-python-headless")
         return
     api_key = os.environ.get("GROQ_API_KEY")
     nomes_pesquisadores = list(st.session_state.get("lista_pesquisadores", []))
