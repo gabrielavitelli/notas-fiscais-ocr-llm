@@ -216,6 +216,38 @@ STYLE = """
   /* Menu lateral: mais espaço e destaque no item ativo */
   section[data-testid="stSidebar"] [data-testid="stRadio"] > label { padding: 0.5rem 0.75rem !important; border-radius: 8px !important; }
   section[data-testid="stSidebar"] [data-testid="stRadio"] > label:hover { background: rgba(37, 99, 235, 0.08) !important; }
+  /* Resultados: texto preto em fundo branco */
+  [data-testid="stAppViewContainer"] div[data-testid="stVerticalBlock"] > div .stMarkdown,
+  [data-testid="stAppViewContainer"] div[data-testid="stVerticalBlock"] .stCaption,
+  [data-testid="stAppViewContainer"] div[data-testid="stVerticalBlock"] label,
+  [data-testid="stAppViewContainer"] div[data-testid="stVerticalBlock"] span,
+  [data-testid="stAppViewContainer"] div[data-testid="stVerticalBlock"] p,
+  [data-testid="stAppViewContainer"] .stRadio label,
+  [data-testid="stAppViewContainer"] .stSelectbox label,
+  [data-testid="stAppViewContainer"] .stCheckbox label,
+  [data-testid="stAppViewContainer"] .stDateInput label { color: #0F172A !important; }
+  /* Tabela (data_editor): fundo bege e letra preta */
+  [data-testid="stDataFrame"],
+  div[data-testid="stDataFrame"],
+  [data-testid="stDataFrame"] [data-testid="stDataFrameResizable"],
+  [data-testid="stDataFrame"] > div,
+  [data-testid="stDataFrame"] table,
+  [data-testid="stDataFrame"] thead,
+  [data-testid="stDataFrame"] thead th,
+  [data-testid="stDataFrame"] tbody,
+  [data-testid="stDataFrame"] tbody td,
+  [data-testid="stDataFrame"] div,
+  [data-testid="stDataFrame"] span,
+  [data-testid="stDataFrame"] label {
+    background-color: #F5F0E8 !important;
+    color: #0F172A !important;
+    border-color: #E2E8F0 !important;
+  }
+  [data-testid="stDataFrame"] input {
+    background-color: #FFFFFF !important;
+    color: #0F172A !important;
+    border: 1px solid #E2E8F0 !important;
+  }
 </style>
 """
 
@@ -642,9 +674,23 @@ def page_inicio():
                 st.rerun()
         if st.session_state.get("llm_last_error"):
             err_info = st.session_state.llm_last_error
+            msg = err_info.get("msg", "")
             st.markdown("---")
-            st.error("**Erro na LLM (extração com IA)** — veja o detalhe abaixo; costuma ser chave inválida ou limite da API.")
-            st.code(err_info.get("msg", ""), language="text")
+            st.error("**Erro na LLM (extração com IA)** — veja o detalhe abaixo.")
+            if "Invalid API Key" in msg or "invalid_api_key" in msg:
+                st.warning(
+                    "**Chave da Groq inválida (401).** A `GROQ_API_KEY` nos Secrets está incorreta ou mal colada. "
+                    "**Faça assim:** 1) Abra [console.groq.com/keys](https://console.groq.com/keys) e crie ou copie uma chave (começa com `gsk_`). "
+                    "2) Em **Secrets** do app, use exatamente: `GROQ_API_KEY = \"gsk_...\"` — **sem espaços** antes/depois da chave e **sem aspas a mais**. Cole a chave inteira. "
+                    "3) Guarde, espere ~1 min e faça **Reboot** do app."
+                )
+            elif "Invalid username or password" in msg or ("401" in msg and "huggingface" in msg.lower()):
+                st.warning(
+                    "**Token do Hugging Face inválido (401).** O erro vem da API do Hugging Face, não da Groq. "
+                    "**Soluções:** 1) Use só Groq: em **Secrets** coloque apenas `GROQ_API_KEY` (chave em [console.groq.com](https://console.groq.com/keys)) e remova ou apague o valor de `HF_TOKEN`. "
+                    "2) Ou corrija o token HF em [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) (crie um token novo e atualize nos Secrets)."
+                )
+            st.code(msg, language="text")
             if err_info.get("detail"):
                 st.caption(f"Causa: {err_info['detail']}")
             if st.button("Limpar esta mensagem", key="clear_llm_err"):
@@ -781,22 +827,6 @@ def page_revisar():
 
 def page_configuracoes():
     st.subheader("⚙️ Configurações")
-
-    # Debug: indica se as chaves de API foram lidas (.env ou Streamlit Secrets)
-    _load_secrets_to_env()
-    groq_ok = bool((os.environ.get("GROQ_API_KEY") or os.environ.get("groq_api_key") or "").strip())
-    hf_ok = bool((os.environ.get("HF_TOKEN") or os.environ.get("hf_token") or "").strip())
-    st.markdown("**🔑 Chaves de API (debug)**")
-    c1, c2 = st.columns(2)
-    with c1:
-        st.caption(f"**GROQ_API_KEY:** {'✅ sim' if groq_ok else '❌ não'}")
-    with c2:
-        st.caption(f"**HF_TOKEN:** {'✅ sim' if hf_ok else '❌ não'}")
-    if not groq_ok and not hf_ok:
-        st.warning("Nenhuma chave configurada. **Na nuvem:** share.streamlit.io → seu app → **Settings** → **Secrets** → adicione `GROQ_API_KEY` ou `HF_TOKEN` (formato TOML). **No PC:** crie o arquivo `.env` na pasta do projeto com a mesma variável.")
-    else:
-        st.caption("Pelo menos uma chave está disponível para extração com IA.")
-    st.markdown("---")
     st.markdown("**📁 Planilha no Drive (ou pasta local)**")
     st.caption("**Por padrão** os dados são salvos em **nf_dados/** (CSV, estado e log). Deixe vazio para usar esse padrão. Se quiser outro local (ex.: pasta do Google Drive), informe o caminho completo do arquivo CSV.")
     default_hint = str(_default_csv_path()) if _default_csv_path() else "nf_dados/nf_extraidas.csv"
