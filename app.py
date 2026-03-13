@@ -226,7 +226,7 @@ STYLE = """
   [data-testid="stAppViewContainer"] .stSelectbox label,
   [data-testid="stAppViewContainer"] .stCheckbox label,
   [data-testid="stAppViewContainer"] .stDateInput label { color: #0F172A !important; }
-  /* Tabela (data_editor): fundo bege e letra preta bem visível */
+  /* Tabela (data_editor): fundo bege e texto PRETO — regras fortes para sobrepor tema */
   [data-testid="stDataFrame"],
   div[data-testid="stDataFrame"],
   [data-testid="stDataFrame"] [data-testid="stDataFrameResizable"],
@@ -250,9 +250,22 @@ STYLE = """
     color: #000000 !important;
     border: 1px solid #E2E8F0 !important;
   }
-  /* Glue do Streamlit para tabelas (garante texto preto) */
+  /* Forçar preto em qualquer descendente da tabela (sobrepõe tema/variaveis) */
   [data-testid="stDataFrame"] [data-testid="stDataFrameResizable"] *,
-  div[data-testid="stDataFrame"] * { color: #000000 !important; }
+  div[data-testid="stDataFrame"] *,
+  [data-testid="stDataFrame"] *,
+  [data-testid="stDataFrame"] table *,
+  [data-testid="stDataFrame"] td *,
+  [data-testid="stDataFrame"] th *,
+  [data-testid="stDataFrame"] div[role="cell"],
+  [data-testid="stDataFrame"] div[role="columnheader"],
+  [data-testid="stDataFrame"] .stDataFrame * { color: #000000 !important; }
+  /* Wrapper opcional: se a tabela estiver dentro de .nf-tabela-bege */
+  .nf-tabela-bege,
+  .nf-tabela-bege *,
+  .nf-tabela-bege [data-testid="stDataFrame"],
+  .nf-tabela-bege [data-testid="stDataFrame"] * { color: #000000 !important; background-color: #F5F0E8 !important; }
+  .nf-tabela-bege [data-testid="stDataFrame"] input { background-color: #FFFFFF !important; color: #000000 !important; }
   /* Botão Exportar CSV: texto sempre visível (preto em botão claro) */
   [data-testid="stDownloadButton"] button,
   [data-testid="stDownloadButton"] button span,
@@ -789,8 +802,12 @@ def page_inicio():
                 filtered = [r for r in filtered if (r.get("nome_comprador") or "").strip() == filtro_pesq]
 
             df = results_to_dataframe(filtered)
-            st.data_editor(
-                df,
+            # Estilo inline garante texto preto e fundo bege (sobrepõe tema do Streamlit)
+            styled = df.style.set_properties(
+                **{"color": "#000000", "background-color": "#F5F0E8"}
+            )
+            st.dataframe(
+                styled,
                 use_container_width=True,
                 hide_index=True,
                 column_config={
