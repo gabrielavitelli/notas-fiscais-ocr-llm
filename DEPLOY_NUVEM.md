@@ -4,6 +4,18 @@ Para o **Notas Fiscais** ficar acessível 24/7 pela internet, mesmo com o seu co
 
 ---
 
+## Antes do deploy — checklist
+
+- [ ] **Não há `packages.txt`** no repositório (ele quebra o build; se existir: `git rm packages.txt` e push).
+- [ ] **`.env` não vai para o GitHub** (já está no `.gitignore`; use **Secrets** no painel do Streamlit para chaves).
+- [ ] **`requirements.txt`** está na pasta do app (ou na raiz do repo) com as dependências; o primeiro build (DocTR + PyTorch) pode levar 5–15 min.
+- [ ] **Main file path** no Streamlit Cloud aponta para o arquivo certo (ex.: `app.py` ou `notas_fiscais/app.py` se estiver em subpasta).
+- [ ] Depois do deploy, em **Settings → Secrets** configure pelo menos `GROQ_API_KEY` (ou `HF_TOKEN`).
+
+Na nuvem, CSV e estado são gravados em diretório temporário da sessão se a pasta do app for read-only; use **Exportar CSV** para guardar os dados.
+
+---
+
 ## O que muda na nuvem
 
 | No seu PC | Na nuvem |

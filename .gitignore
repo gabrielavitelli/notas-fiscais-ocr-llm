@@ -23,3 +23,5 @@ venv/
 # Estado persistente do app (memória local)
 notas_fiscais_state.json
 notas_fiscais_duvidas_erros.json
+# Diretório padrão: CSV, estado e log (criado automaticamente)
+nf_dados/

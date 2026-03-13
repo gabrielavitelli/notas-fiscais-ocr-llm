@@ -30,15 +30,50 @@ import streamlit as st
 VERSION = "1.0.0"
 LAST_UPDATE = "2025-03"
 
-# Arquivo de estado persistente (memória entre sessões; na nuvem pode ser read-only)
+# Diretório padrão: CSV, estado e log num só lugar (na nuvem, se read-only, usa temp)
 try:
     _base = Path(__file__).resolve().parent
 except Exception:
     _base = Path(".")
-STATE_FILE = _base / "notas_fiscais_state.json"
-LOG_DUVIDAS_FILE = _base / "notas_fiscais_duvidas_erros.json"
-# CSV padrão na pasta do app (persiste; se configurar csv_drive_path nas configs, usa esse)
-DEFAULT_CSV_PATH = _base / "nf_extraidas.csv"
+NF_DADOS_DIR = _base / "nf_dados"
+_fallback_dados_dir = None
+
+
+def _get_dados_dir():
+    """Retorna o diretório de dados (nf_dados ou temp se não for possível escrever na pasta do app)."""
+    global _fallback_dados_dir
+    if _fallback_dados_dir is not None:
+        return _fallback_dados_dir
+    try:
+        NF_DADOS_DIR.mkdir(parents=True, exist_ok=True)
+        # Testa se consegue escrever (na nuvem a pasta do app pode ser read-only)
+        (NF_DADOS_DIR / ".write_test").write_text("ok", encoding="utf-8")
+        (NF_DADOS_DIR / ".write_test").unlink(missing_ok=True)
+        return NF_DADOS_DIR
+    except Exception:
+        try:
+            _fallback_dados_dir = Path(tempfile.gettempdir()) / "notas_fiscais_nf_dados"
+            _fallback_dados_dir.mkdir(parents=True, exist_ok=True)
+            return _fallback_dados_dir
+        except Exception:
+            return NF_DADOS_DIR  # último recurso, pode falhar ao salvar
+
+
+def _ensure_dados_dir():
+    """Garante que o diretório de dados existe (chama _get_dados_dir())."""
+    _get_dados_dir()
+
+
+def _state_file():
+    return _get_dados_dir() / "notas_fiscais_state.json"
+
+
+def _log_duvidas_file():
+    return _get_dados_dir() / "notas_fiscais_duvidas_erros.json"
+
+
+def _default_csv_path():
+    return _get_dados_dir() / "nf_extraidas.csv"
 
 STYLE = """
 <style>
@@ -121,13 +156,16 @@ STYLE = """
   [data-testid="stAppViewContainer"] [data-testid="stFileUploader"] div,
   [data-testid="stAppViewContainer"] [data-testid="stFileUploader"] p,
   [data-testid="stAppViewContainer"] [data-testid="stFileUploader"] * { color: #000000 !important; }
-  /* Texto da área de drop (Drag and drop / Limit 200MB) em branco */
-  [data-testid="stAppViewContainer"] [data-testid="stFileUploaderDropzone"],
-  [data-testid="stAppViewContainer"] [data-testid="stFileUploaderDropzone"] *,
-  [data-testid="stFileUploaderDropzone"],
-  [data-testid="stFileUploaderDropzone"] *,
+  /* Texto da área de drop (Drag and drop / Limit 200MB) em BRANCO — depois do preto para ganhar especificidade */
+  [data-testid="stAppViewContainer"] [data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"],
+  [data-testid="stAppViewContainer"] [data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"] *,
   [data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"],
-  [data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"] * { color: #FFFFFF !important; }
+  [data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"] *,
+  /* Fallback: 1º bloco do uploader costuma ser o dropzone (Streamlit pode mudar testid) */
+  [data-testid="stFileUploader"] > div:first-child,
+  [data-testid="stFileUploader"] > div:first-child *,
+  [data-testid="stAppViewContainer"] [data-testid="stFileUploader"] > div:first-child,
+  [data-testid="stAppViewContainer"] [data-testid="stFileUploader"] > div:first-child * { color: #FFFFFF !important; fill: #FFFFFF !important; }
   [data-testid="stAppViewContainer"] [data-testid="stProgress"] span,
   [data-testid="stAppViewContainer"] [data-testid="stProgress"] label,
   [data-testid="stAppViewContainer"] [data-testid="stProgress"] * { color: #000000 !important; }
@@ -165,8 +203,9 @@ def _load_state():
         "ultima_execucao": "",
     }
     try:
-        if STATE_FILE.exists():
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
+        sf = _state_file()
+        if sf.exists():
+            with open(sf, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, dict):
                 out["lista_pesquisadores"] = data.get("lista_pesquisadores") if isinstance(data.get("lista_pesquisadores"), list) else []
@@ -176,8 +215,9 @@ def _load_state():
                 out["results"] = data.get("results") if isinstance(data.get("results"), list) else []
                 out["csv_drive_path"] = str(data.get("csv_drive_path") or "").strip()[:500]
                 out["ultima_execucao"] = str(data.get("ultima_execucao") or "").strip()[:50]
-        if LOG_DUVIDAS_FILE.exists():
-            with open(LOG_DUVIDAS_FILE, "r", encoding="utf-8") as f:
+        lf = _log_duvidas_file()
+        if lf.exists():
+            with open(lf, "r", encoding="utf-8") as f:
                 log = json.load(f)
             if isinstance(log, list):
                 out["log_duvidas_erros"] = log
@@ -189,6 +229,7 @@ def _load_state():
 def _save_state():
     """Persiste estado para não perder ao fechar o app."""
     try:
+        _ensure_dados_dir()
         data = {
             "lista_pesquisadores": st.session_state.get("lista_pesquisadores", []),
             "metrics": st.session_state.get("metrics", {}),
@@ -196,7 +237,7 @@ def _save_state():
             "csv_drive_path": (st.session_state.get("csv_drive_path") or "").strip(),
             "ultima_execucao": st.session_state.get("ultima_execucao", ""),
         }
-        with open(STATE_FILE, "w", encoding="utf-8") as f:
+        with open(_state_file(), "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=0)
     except Exception:
         pass
@@ -205,9 +246,11 @@ def _save_state():
 def _append_log_duvida(tipo, arquivo, mensagem, detalhe=None):
     """Registra dúvida ou erro para análise em longo prazo."""
     try:
+        _ensure_dados_dir()
         log = []
-        if LOG_DUVIDAS_FILE.exists():
-            with open(LOG_DUVIDAS_FILE, "r", encoding="utf-8") as f:
+        lf = _log_duvidas_file()
+        if lf.exists():
+            with open(lf, "r", encoding="utf-8") as f:
                 log = json.load(f)
         log.append({
             "data_hora": datetime.now().isoformat(),
@@ -216,7 +259,7 @@ def _append_log_duvida(tipo, arquivo, mensagem, detalhe=None):
             "mensagem": mensagem,
             "detalhe": detalhe,
         })
-        with open(LOG_DUVIDAS_FILE, "w", encoding="utf-8") as f:
+        with open(lf, "w", encoding="utf-8") as f:
             json.dump(log[-500:], f, ensure_ascii=False, indent=2)
     except Exception:
         pass
@@ -318,9 +361,12 @@ def run_processing(progress_placeholder):
     try:
         model = carregar_modelo_doctr()
     except Exception as e:
+        _ensure_dados_dir()
         st.warning(
-            "**DocTR não carregou.** Se estiver na nuvem, o primeiro deploy pode levar vários minutos; confira os **Logs** em Manage app. "
-            "No PC: `pip install -r requirements-local.txt` e `streamlit run app.py`."
+            "**DocTR não carregou** — o OCR não está disponível neste ambiente. "
+            "**Onde os dados ficam:** CSV, estado e log são gravados na pasta **nf_dados/** (na mesma pasta do app). "
+            "Para usar o OCR completo no seu PC: `pip install -r requirements-local.txt` e rode `streamlit run app.py` localmente. "
+            "Na nuvem o DocTR pode não estar instalado; você pode exportar CSV pelos resultados."
         )
         # Marca como erro e remove bytes para não ficar em loop "Processando..."
         st.session_state.processing[i]["status"] = "Erro: DocTR não carregou"
@@ -348,8 +394,8 @@ def run_processing(progress_placeholder):
             except Exception:
                 pass
         else:
-            # CSV na pasta do app para persistir (não usar tmpdir que é apagado)
-            csv_path = DEFAULT_CSV_PATH
+            _ensure_dados_dir()
+            csv_path = _default_csv_path()
         path = tmpdir / (name or f"file_{i}")
         path.write_bytes(item["bytes"])
         t0 = time.time()
@@ -564,7 +610,7 @@ def page_inicio():
             st.markdown("Filtre por **rubrica**, **data** ou **pesquisador**. Ao final, **exporte em CSV**.")
             csv_path_cfg = (st.session_state.get("csv_drive_path") or "").strip()
             if not csv_path_cfg:
-                st.caption("📁 Os dados são gravados também em **nf_extraidas.csv** na pasta do aplicativo.")
+                st.caption("📁 Os dados são gravados em **nf_dados/nf_extraidas.csv** (pasta do app). Estado e log ficam em **nf_dados/**.")
             df_full = results_to_dataframe(results)
 
             st.markdown("**🔍 Filtros**")
@@ -652,11 +698,12 @@ def page_revisar():
 def page_configuracoes():
     st.subheader("⚙️ Configurações")
     st.markdown("**📁 Planilha no Drive (ou pasta local)**")
-    st.caption("Se preenchido, os dados são gravados direto nesse arquivo CSV (ex.: pasta sincronizada com Google Drive). Documentos já presentes não são duplicados.")
+    st.caption("**Por padrão** os dados são salvos em **nf_dados/** (CSV, estado e log). Deixe vazio para usar esse padrão. Se quiser outro local (ex.: pasta do Google Drive), informe o caminho completo do arquivo CSV.")
+    default_hint = str(_default_csv_path()) if _default_csv_path() else "nf_dados/nf_extraidas.csv"
     csv_path = st.text_input(
-        "Caminho do arquivo CSV",
+        "Caminho do arquivo CSV (vazio = padrão)",
         value=st.session_state.get("csv_drive_path", "") or "",
-        placeholder="Ex.: G:\\Meu Drive\\notas_fiscais_silvia\\notas.csv",
+        placeholder=default_hint,
         key="input_csv_drive_path",
     )
     if csv_path != st.session_state.get("csv_drive_path", ""):
@@ -691,9 +738,10 @@ def page_configuracoes():
     st.markdown("---")
     st.markdown("**📋 Registro de dúvidas e erros** (últimas entradas)")
     log = []
-    if LOG_DUVIDAS_FILE.exists():
+    lf = _log_duvidas_file()
+    if lf.exists():
         try:
-            with open(LOG_DUVIDAS_FILE, "r", encoding="utf-8") as f:
+            with open(lf, "r", encoding="utf-8") as f:
                 log = json.load(f)
         except Exception:
             pass
@@ -752,6 +800,7 @@ def main():
     except Exception:
         pass
     inject_css()
+    _ensure_dados_dir()
     try:
         init_session_state()
         render_sidebar()
