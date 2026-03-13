@@ -301,6 +301,10 @@ def init_session_state():
 
 @st.cache_resource
 def carregar_modelo_doctr():
+    # Força ambiente headless antes de qualquer import do OpenCV/DocTR (evita erro de display na nuvem)
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    os.environ.setdefault("OPENCV_OPENCL_RUNTIME", "")
+    import doctr  # noqa: F401
     from doctr.models import ocr_predictor
     return ocr_predictor(pretrained=True)
 
@@ -365,12 +369,10 @@ def run_processing(progress_placeholder):
         err_msg = str(e).strip() or repr(e)
         st.warning(
             "**DocTR não carregou** — o OCR não está disponível neste ambiente. "
-            "**Onde os dados ficam:** CSV, estado e log são gravados na pasta **nf_dados/** (na mesma pasta do app). "
-            "Para usar o OCR completo no seu PC: `pip install -r requirements-local.txt` e rode `streamlit run app.py` localmente. "
-            "Na nuvem você pode exportar CSV pelos resultados."
+            "CSV e estado ficam em **nf_dados/**. No PC: `pip install -r requirements-local.txt` e `streamlit run app.py`."
         )
-        with st.expander("Ver detalhes do erro (útil para diagnóstico)"):
-            st.code(err_msg, language="text")
+        st.error(f"**Erro técnico:** {err_msg}")
+        with st.expander("Traceback completo (copie e envie se for reportar)"):
             import traceback
             st.code(traceback.format_exc(), language="text")
         # Marca como erro e remove bytes para não ficar em loop "Processando..."
