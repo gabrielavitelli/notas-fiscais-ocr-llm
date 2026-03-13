@@ -37,6 +37,8 @@ except Exception:
     _base = Path(".")
 STATE_FILE = _base / "notas_fiscais_state.json"
 LOG_DUVIDAS_FILE = _base / "notas_fiscais_duvidas_erros.json"
+# CSV padrão na pasta do app (persiste; se configurar csv_drive_path nas configs, usa esse)
+DEFAULT_CSV_PATH = _base / "nf_extraidas.csv"
 
 STYLE = """
 <style>
@@ -119,7 +121,11 @@ STYLE = """
   [data-testid="stAppViewContainer"] [data-testid="stFileUploader"] div,
   [data-testid="stAppViewContainer"] [data-testid="stFileUploader"] p,
   [data-testid="stAppViewContainer"] [data-testid="stFileUploader"] * { color: #000000 !important; }
-  /* Só o texto da área de drop (Drag and drop / Limit 200MB) em branco */
+  /* Texto da área de drop (Drag and drop / Limit 200MB) em branco */
+  [data-testid="stAppViewContainer"] [data-testid="stFileUploaderDropzone"],
+  [data-testid="stAppViewContainer"] [data-testid="stFileUploaderDropzone"] *,
+  [data-testid="stFileUploaderDropzone"],
+  [data-testid="stFileUploaderDropzone"] *,
   [data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"],
   [data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"] * { color: #FFFFFF !important; }
   [data-testid="stAppViewContainer"] [data-testid="stProgress"] span,
@@ -294,7 +300,7 @@ def render_sidebar():
         else:
             st.session_state.page = "Sobre"
         st.markdown("---")
-        st.markdown('<div class="nf-sidebar-footer">**Notas Fiscais**<br>Extração estruturada com DocTR e IA</div>', unsafe_allow_html=True)
+        st.markdown('<div class="nf-sidebar-footer">Extração estruturada com DocTR e IA</div>', unsafe_allow_html=True)
 
 
 def run_processing(progress_placeholder):
@@ -316,6 +322,13 @@ def run_processing(progress_placeholder):
             "**DocTR não carregou.** Se estiver na nuvem, o primeiro deploy pode levar vários minutos; confira os **Logs** em Manage app. "
             "No PC: `pip install -r requirements-local.txt` e `streamlit run app.py`."
         )
+        # Marca como erro e remove bytes para não ficar em loop "Processando..."
+        st.session_state.processing[i]["status"] = "Erro: DocTR não carregou"
+        st.session_state.processing[i].pop("bytes", None)
+        metrics = st.session_state.get("metrics", {})
+        metrics["erros_total"] = metrics.get("erros_total", 0) + 1
+        st.session_state.metrics = metrics
+        _save_state()
         return False
     api_key = os.environ.get("GROQ_API_KEY")
     nomes_pesquisadores = list(st.session_state.get("lista_pesquisadores", []))
@@ -335,7 +348,8 @@ def run_processing(progress_placeholder):
             except Exception:
                 pass
         else:
-            csv_path = tmpdir / "nf_extraidas.csv"
+            # CSV na pasta do app para persistir (não usar tmpdir que é apagado)
+            csv_path = DEFAULT_CSV_PATH
         path = tmpdir / (name or f"file_{i}")
         path.write_bytes(item["bytes"])
         t0 = time.time()
@@ -512,10 +526,15 @@ def page_inicio():
             has_pending = any(p.get("bytes") for p in processing)
             if has_pending:
                 n_total = len(processing)
-                done_so_far = n_total - sum(1 for p in processing if p.get("bytes") and p.get("status") not in ("Finalizado", "Erro"))
+                pending_count = sum(1 for p in processing if p.get("bytes") and p.get("status") not in ("Finalizado", "Erro"))
+                done_so_far = n_total - pending_count
                 pct = (done_so_far * 100) // n_total if n_total else 0
                 progress_placeholder = st.empty()
-                progress_placeholder.progress(done_so_far / n_total if n_total else 0, text=f"Arquivo {done_so_far + 1} de {n_total} ({pct}%)")
+                # Evita "0%" parado: se ainda vai processar, mostra "Processando…"; quando termina o rerun mostra o resultado
+                if pending_count > 0 and done_so_far == 0:
+                    progress_placeholder.progress(0, text=f"Processando arquivo 1 de {n_total}…")
+                else:
+                    progress_placeholder.progress(done_so_far / n_total if n_total else 0, text=f"Arquivo {done_so_far + 1} de {n_total} ({pct}%)")
                 try:
                     has_more = run_processing(progress_placeholder)
                     if has_more:
@@ -543,6 +562,9 @@ def page_inicio():
             st.markdown("---")
             st.markdown("#### 3️⃣ Resultados")
             st.markdown("Filtre por **rubrica**, **data** ou **pesquisador**. Ao final, **exporte em CSV**.")
+            csv_path_cfg = (st.session_state.get("csv_drive_path") or "").strip()
+            if not csv_path_cfg:
+                st.caption("📁 Os dados são gravados também em **nf_extraidas.csv** na pasta do aplicativo.")
             df_full = results_to_dataframe(results)
 
             st.markdown("**🔍 Filtros**")
