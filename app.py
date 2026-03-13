@@ -28,9 +28,13 @@ import streamlit as st
 VERSION = "1.0.0"
 LAST_UPDATE = "2025-03"
 
-# Arquivo de estado persistente (memória entre sessões)
-STATE_FILE = Path(__file__).resolve().parent / "notas_fiscais_state.json"
-LOG_DUVIDAS_FILE = Path(__file__).resolve().parent / "notas_fiscais_duvidas_erros.json"
+# Arquivo de estado persistente (memória entre sessões; na nuvem pode ser read-only)
+try:
+    _base = Path(__file__).resolve().parent
+except Exception:
+    _base = Path(".")
+STATE_FILE = _base / "notas_fiscais_state.json"
+LOG_DUVIDAS_FILE = _base / "notas_fiscais_duvidas_erros.json"
 
 STYLE = """
 <style>
@@ -153,14 +157,19 @@ def _load_state():
         if STATE_FILE.exists():
             with open(STATE_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            out["lista_pesquisadores"] = data.get("lista_pesquisadores", []) or []
-            out["metrics"] = {**out["metrics"], **(data.get("metrics") or {})}
-            out["results"] = data.get("results", []) or []
-            out["csv_drive_path"] = (data.get("csv_drive_path") or "").strip()
-            out["ultima_execucao"] = (data.get("ultima_execucao") or "").strip()
+            if isinstance(data, dict):
+                out["lista_pesquisadores"] = data.get("lista_pesquisadores") if isinstance(data.get("lista_pesquisadores"), list) else []
+                m = data.get("metrics")
+                if isinstance(m, dict):
+                    out["metrics"] = {**out["metrics"], **m}
+                out["results"] = data.get("results") if isinstance(data.get("results"), list) else []
+                out["csv_drive_path"] = str(data.get("csv_drive_path") or "").strip()[:500]
+                out["ultima_execucao"] = str(data.get("ultima_execucao") or "").strip()[:50]
         if LOG_DUVIDAS_FILE.exists():
             with open(LOG_DUVIDAS_FILE, "r", encoding="utf-8") as f:
-                out["log_duvidas_erros"] = json.load(f)
+                log = json.load(f)
+            if isinstance(log, list):
+                out["log_duvidas_erros"] = log
     except Exception:
         pass
     return out
@@ -266,8 +275,11 @@ def render_sidebar():
         pages = ["☁️ Upload", "⚠️ Revisar", "⚙️ Configurações", "ℹ️ Sobre"]
         page_to_index = {"Início": 0, "Revisar": 1, "Configurações": 2, "Sobre": 3}
         current = st.session_state.get("page", "Início")
-        idx = page_to_index.get(current, 0)
-        page = st.radio("Menu", options=pages, index=idx, key="sidebar_nav", label_visibility="collapsed")
+        try:
+            idx = min(page_to_index.get(current, 0), len(pages) - 1)
+            page = st.radio("Menu", options=pages, index=idx, key="sidebar_nav", label_visibility="collapsed")
+        except Exception:
+            page = st.radio("Menu", options=pages, key="sidebar_nav", label_visibility="collapsed")
         if "Upload" in page:
             st.session_state.page = "Início"
         elif "Revisar" in page:
@@ -689,8 +701,10 @@ def page_sobre():
 
 
 def main():
-    st.set_page_config(page_title="Registo Notas Fiscais", page_icon="📄", layout="wide", initial_sidebar_state="expanded")
-    # Secrets (Streamlit Cloud) após set_page_config para não quebrar a ordem exigida
+    try:
+        st.set_page_config(page_title="Registo Notas Fiscais", page_icon="📄", layout="wide", initial_sidebar_state="expanded")
+    except Exception:
+        pass  # set_page_config só pode rodar uma vez
     try:
         for k, v in (getattr(st, "secrets", None) or {}).items():
             if isinstance(v, str) and str(k).isupper():
@@ -712,9 +726,10 @@ def main():
         else:
             page_sobre()
     except Exception as e:
-        st.error(f"Erro ao carregar o app: {e}")
+        st.error(f"**Erro ao carregar o app:** {e}")
         import traceback
-        st.code(traceback.format_exc())
+        with st.expander("Detalhes técnicos (traceback)"):
+            st.code(traceback.format_exc())
 
 
 if __name__ == "__main__":
