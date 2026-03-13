@@ -1,4 +1,5 @@
-# OCR
+# OCR (opencv-headless evita libGL em servidor/nuvem; packages.txt adiciona libgl1 se necessário)
+opencv-python-headless>=4.8.0
 python-doctr[torch]>=0.7.0
 
 # LLM — Groq (grátis) ou Hugging Face (grátis) ou transformers (local)

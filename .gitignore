@@ -1,6 +1,12 @@
 # Chaves e segredos (nunca commitar)
 .env
 
+# Documentos pessoais / notas fiscais (não subir ao GitHub)
+*.pdf
+*.PDF
+nf_extraidas*.csv
+nf_extraidas2*.csv
+
 # Python
 __pycache__/
 *.py[cod]
