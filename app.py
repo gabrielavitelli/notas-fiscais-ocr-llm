@@ -307,7 +307,15 @@ def init_session_state():
 
 @st.cache_resource
 def carregar_modelo_doctr():
-    # Força ambiente headless antes de qualquer import do OpenCV/DocTR (evita erro de display na nuvem)
+    # Cache do Hugging Face/Doctr em diretório gravável (na nuvem /tmp)
+    try:
+        _cache = tempfile.gettempdir()
+        _hub = os.path.join(_cache, "hf_hub")
+        os.makedirs(_hub, exist_ok=True)
+        os.environ["HF_HOME"] = _cache
+        os.environ["HUGGINGFACE_HUB_CACHE"] = _hub
+    except Exception:
+        pass
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     os.environ.setdefault("OPENCV_OPENCL_RUNTIME", "")
     import doctr  # noqa: F401
@@ -372,15 +380,18 @@ def run_processing(progress_placeholder):
         model = carregar_modelo_doctr()
     except Exception as e:
         _ensure_dados_dir()
+        import traceback
         err_msg = str(e).strip() or repr(e)
+        tb_str = traceback.format_exc()
+        # Guarda na sessão para não sumir após o rerun
+        st.session_state["doctr_last_error"] = {"msg": err_msg, "tb": tb_str}
         st.warning(
             "**DocTR não carregou** — o OCR não está disponível neste ambiente. "
             "CSV e estado ficam em **nf_dados/**. No PC: `pip install -r requirements-local.txt` e `streamlit run app.py`."
         )
         st.error(f"**Erro técnico:** {err_msg}")
         with st.expander("Traceback completo (copie e envie se for reportar)"):
-            import traceback
-            st.code(traceback.format_exc(), language="text")
+            st.code(tb_str, language="text")
         # Marca como erro e remove bytes para não ficar em loop "Processando..."
         st.session_state.processing[i]["status"] = "Erro: DocTR não carregou"
         st.session_state.processing[i].pop("bytes", None)
@@ -579,6 +590,16 @@ def page_inicio():
         st.markdown("</div>", unsafe_allow_html=True)
 
     with col_main:
+        # Erro do DocTR fica guardado para não sumir após o rerun
+        if st.session_state.get("doctr_last_error"):
+            err_info = st.session_state.doctr_last_error
+            st.markdown("---")
+            st.error(f"**Último erro ao carregar DocTR:** {err_info.get('msg', '')}")
+            with st.expander("Traceback completo (copie e envie para diagnóstico)"):
+                st.code(err_info.get("tb", ""), language="text")
+            if st.button("Limpar esta mensagem"):
+                del st.session_state["doctr_last_error"]
+                st.rerun()
         if processing:
             st.markdown("---")
             st.markdown("#### 2️⃣ Processamento")
