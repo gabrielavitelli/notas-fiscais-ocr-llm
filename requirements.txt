@@ -1,23 +1,8 @@
-# PyTorch CPU (menor que CUDA; necessário para DocTR na nuvem)
---extra-index-url https://download.pytorch.org/whl/cpu
-torch>=2.0.0,<2.4
-torchvision>=0.15.0
+# Mínimo para o app abrir na nuvem (Streamlit Cloud).
+# No PC, para OCR + Sheets: pip install python-doctr[torch] opencv-python-headless gspread google-auth
 
-# OCR DocTR (usa torch acima)
-opencv-python-headless>=4.8.0
-python-doctr>=0.7.0
-
-# LLM — Groq ou Hugging Face
-openai>=1.0.0
-
-# Google Sheets
-gspread>=6.0.0
-google-auth>=2.0.0
-
-# PDF/imagem
-Pillow>=10.0.0
-
-# Interface
 streamlit>=1.28.0
 pandas>=2.0.0
+openai>=1.0.0
+Pillow>=10.0.0
 python-dotenv>=1.0.0

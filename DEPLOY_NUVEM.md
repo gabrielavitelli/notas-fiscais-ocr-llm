@@ -153,7 +153,13 @@ Depois de rodar `deploy_github.bat`:
 
 Depois de um **push com sucesso**, o Streamlit costuma reconstruir sozinho em 2–5 minutos. Se não reconstruir, use **"Reboot app"**.
 
-### 4. Main file path
+### 4. "Error installing requirements" — ver o erro de verdade
+
+1. No [share.streamlit.io](https://share.streamlit.io) → seu app → **Manage app** (ou ⋮) → **Logs**.
+2. Role até a parte do **build** (instalação de dependências). Lá aparece a linha exata que o `pip` reclamou (pacote que não existe, conflito de versão, etc.).
+3. Confirme que o **requirements.txt que está no GitHub** é o que você acha: abra `https://github.com/SEU_USUARIO/NOME_DO_REPO/blob/main/requirements.txt` (ou `notas_fiscais/requirements.txt` se o app estiver em subpasta). Se ainda tiver `torch` ou `python-doctr`, o push não atualizou — rode de novo o deploy e veja se deu "[OK] Push concluído".
+
+### 5. Main file path
 
 Se o repositório tiver uma **pasta** (ex.: `notas_fiscais/app.py`), no Streamlit Cloud o **Main file path** tem de ser `notas_fiscais/app.py`. Se estiver como só `app.py`, o app não acha o arquivo e pode dar erro genérico.
 
