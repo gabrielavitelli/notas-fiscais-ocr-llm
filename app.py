@@ -4,6 +4,12 @@ Uma única aba: upload → processamento → resultados (filtros e exportação 
 Chaves de API no arquivo .env.
 """
 import os
+
+# Headless para OpenCV/DocTR na nuvem (antes de qualquer import que use cv2)
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("OPENCV_OPENCL_RUNTIME", "")
+os.environ.setdefault("DISPLAY", "")
+
 from pathlib import Path
 
 _env_path = Path(__file__).resolve().parent / ".env"
