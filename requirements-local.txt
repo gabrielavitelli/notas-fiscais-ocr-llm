@@ -1,0 +1,14 @@
+# Uso no PC: OCR (DocTR) + interface + LLM. Instale com: pip install -r requirements-local.txt
+# Na nuvem use só requirements.txt (sem DocTR) para o build passar.
+
+streamlit>=1.28.0
+pandas>=2.0.0
+openai>=1.0.0
+Pillow>=10.0.0
+python-dotenv>=1.0.0
+gspread>=6.0.0
+google-auth>=2.0.0
+
+# DocTR + dependências (OCR de qualidade; no PC)
+opencv-python-headless>=4.8.0
+python-doctr[torch]>=0.7.0

@@ -11,8 +11,10 @@ if _env_path.exists():
     try:
         from dotenv import load_dotenv
         load_dotenv(_env_path)
-    except ImportError:
+    except (ImportError, UnicodeDecodeError):
         pass
+    except Exception:
+        pass  # .env com encoding errado (ex. UTF-16): na nuvem use Secrets; no PC salve .env em UTF-8
 
 import json
 import tempfile
@@ -299,22 +301,25 @@ def render_sidebar():
 
 
 def run_processing(progress_placeholder):
-    """Processa todos os arquivos em uma rodada; a barra mostra Arquivo X de Y (Z%)."""
+    """Processa um único arquivo por chamada. Retorna True se ainda há mais para processar (a página faz rerun e a barra avança)."""
     processing = st.session_state.get("processing", [])
     to_run = [i for i, p in enumerate(processing) if p.get("bytes") and p.get("status") not in ("Finalizado", "Erro")]
     n_total = len(processing)
     if not to_run:
-        return
+        return False
+    i = to_run[0]
+    item = processing[i]
+    name = item["name"]
+    done_before = n_total - len(to_run)
+
     try:
         model = carregar_modelo_doctr()
     except Exception as e:
         st.warning(
-            "**Processamento com OCR (DocTR) não está disponível neste ambiente.** "
-            "Na nuvem o app abre para você ver a interface e exportar dados. "
-            "Para **processar** notas fiscais (upload → OCR → extração), rode no seu PC: "
-            "`pip install python-doctr[torch] opencv-python-headless` e depois `streamlit run app.py`."
+            "**DocTR não disponível.** Instale no PC: `pip install -r requirements-local.txt` e rode `streamlit run app.py`. "
+            "Na nuvem o app abre só para visualizar e exportar."
         )
-        return
+        return False
     api_key = os.environ.get("GROQ_API_KEY")
     nomes_pesquisadores = list(st.session_state.get("lista_pesquisadores", []))
     results = list(st.session_state.get("results", []))
@@ -322,6 +327,8 @@ def run_processing(progress_placeholder):
     csv_drive_path = (st.session_state.get("csv_drive_path") or "").strip()
     use_drive_csv = bool(csv_drive_path)
     ja_incluidos = []
+
+    st.session_state.processing[i]["status"] = "OCR"
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)
         if use_drive_csv:
@@ -332,64 +339,63 @@ def run_processing(progress_placeholder):
                 pass
         else:
             csv_path = tmpdir / "nf_extraidas.csv"
-        for idx, i in enumerate(to_run):
-            item = processing[i]
-            name = item["name"]
-            pct = (idx * 100) // len(to_run)
-            progress_placeholder.progress(idx / len(to_run), text=f"Arquivo {idx + 1} de {len(to_run)} ({pct}%) — OCR + LLM…")
-            st.session_state.processing[i]["status"] = "OCR"
-            path = tmpdir / (name or f"file_{i}")
-            path.write_bytes(item["bytes"])
-            t0 = time.time()
-            try:
-                import nf_ocr
-                ok, dados = nf_ocr.processar_arquivo(
-                    path, model, api_key, sheet_id=None, creds_path=None,
-                    csv_path=str(csv_path), dry_run=False, nomes_pesquisadores=nomes_pesquisadores,
-                )
-                elapsed = time.time() - t0
-                if ok and dados is not None:
-                    st.session_state.processing[i]["status"] = "Finalizado"
-                    rec = nf_ocr.registro_from_dados(dados)
-                    rec["_elapsed_sec"] = round(elapsed, 1)
-                    results.append(rec)
-                    score = (rec.get("score_revisao") or "").strip().lower()
-                    if score == "revisar":
-                        metrics["revisar"] = metrics.get("revisar", 0) + 1
-                        _append_log_duvida("revisar", name, "Nota marcada para revisar (falta dado ou incoerência)", rec.get("numero_nf"))
-                    elif score == "verificar":
-                        metrics["verificar"] = metrics.get("verificar", 0) + 1
-                        _append_log_duvida("verificar", name, "Nota com dúvida (verificar)", rec.get("numero_nf"))
-                elif ok and dados is None:
-                    st.session_state.processing[i]["status"] = "Já incluído (não duplicado)"
-                    ja_incluidos.append(name)
-                else:
-                    st.session_state.processing[i]["status"] = "Erro"
-                    metrics["erros_total"] = metrics.get("erros_total", 0) + 1
-                    _append_log_duvida("erro", name, "Processamento falhou", None)
-            except Exception as e:
-                err_msg = str(e)[:60]
-                st.session_state.processing[i]["status"] = f"Erro: {err_msg}"
+        path = tmpdir / (name or f"file_{i}")
+        path.write_bytes(item["bytes"])
+        t0 = time.time()
+        try:
+            import nf_ocr
+            ok, dados = nf_ocr.processar_arquivo(
+                path, model, api_key, sheet_id=None, creds_path=None,
+                csv_path=str(csv_path), dry_run=False, nomes_pesquisadores=nomes_pesquisadores,
+            )
+            elapsed = time.time() - t0
+            if ok and dados is not None:
+                st.session_state.processing[i]["status"] = "Finalizado"
+                rec = nf_ocr.registro_from_dados(dados)
+                rec["_elapsed_sec"] = round(elapsed, 1)
+                results.append(rec)
+                score = (rec.get("score_revisao") or "").strip().lower()
+                if score == "revisar":
+                    metrics["revisar"] = metrics.get("revisar", 0) + 1
+                    _append_log_duvida("revisar", name, "Nota marcada para revisar (falta dado ou incoerência)", rec.get("numero_nf"))
+                elif score == "verificar":
+                    metrics["verificar"] = metrics.get("verificar", 0) + 1
+                    _append_log_duvida("verificar", name, "Nota com dúvida (verificar)", rec.get("numero_nf"))
+            elif ok and dados is None:
+                st.session_state.processing[i]["status"] = "Já incluído (não duplicado)"
+                ja_incluidos.append(name)
+            else:
+                st.session_state.processing[i]["status"] = "Erro"
                 metrics["erros_total"] = metrics.get("erros_total", 0) + 1
-                _append_log_duvida("erro", name, err_msg, None)
-            st.session_state.processing[i]["progress"] = (idx + 1) / len(to_run) * 100
-        progress_placeholder.progress(1.0, text=f"Concluído {len(to_run)} de {len(to_run)} (100%)")
+                _append_log_duvida("erro", name, "Processamento falhou", None)
+        except Exception as e:
+            err_msg = str(e)[:60]
+            st.session_state.processing[i]["status"] = f"Erro: {err_msg}"
+            metrics["erros_total"] = metrics.get("erros_total", 0) + 1
+            _append_log_duvida("erro", name, err_msg, None)
+
+    st.session_state.processing[i].pop("bytes", None)
     if ja_incluidos:
         st.session_state.ultimos_ja_incluidos = ja_incluidos
-    for p in st.session_state.processing:
-        p.pop("bytes", None)
     st.session_state.results = results
-    finished = len([p for p in st.session_state.processing if p.get("status") == "Finalizado"])
-    st.session_state.metrics["files_total"] = st.session_state.metrics.get("files_total", 0) + finished
-    if results:
-        times = [r.get("_elapsed_sec", 0) for r in results if "_elapsed_sec" in r]
-        if times:
-            st.session_state.metrics["avg_ocr_sec"] = round(sum(times) / len(times), 1)
-    total = len(st.session_state.processing)
-    ok_count = len([p for p in st.session_state.processing if p.get("status") == "Finalizado"])
-    st.session_state.metrics["success_rate"] = round(100 * ok_count / total, 0) if total else 100
-    st.session_state.ultima_execucao = datetime.now().strftime("hoje %H:%M")
-    _save_state()
+    st.session_state.metrics.update(metrics)
+
+    if len(to_run) == 1:
+        for p in st.session_state.processing:
+            p.pop("bytes", None)
+        finished = len([p for p in st.session_state.processing if p.get("status") == "Finalizado"])
+        st.session_state.metrics["files_total"] = st.session_state.metrics.get("files_total", 0) + finished
+        if results:
+            times = [r.get("_elapsed_sec", 0) for r in results if "_elapsed_sec" in r]
+            if times:
+                st.session_state.metrics["avg_ocr_sec"] = round(sum(times) / len(times), 1)
+        total = len(st.session_state.processing)
+        ok_count = len([p for p in st.session_state.processing if p.get("status") == "Finalizado"])
+        st.session_state.metrics["success_rate"] = round(100 * ok_count / total, 0) if total else 100
+        st.session_state.ultima_execucao = datetime.now().strftime("hoje %H:%M")
+        _save_state()
+        return False
+    return True
 
 
 def results_to_dataframe(results=None):
@@ -508,10 +514,16 @@ def page_inicio():
             st.markdown("#### 2️⃣ Processamento")
             has_pending = any(p.get("bytes") for p in processing)
             if has_pending:
+                n_total = len(processing)
+                done_so_far = n_total - sum(1 for p in processing if p.get("bytes") and p.get("status") not in ("Finalizado", "Erro"))
+                pct = (done_so_far * 100) // n_total if n_total else 0
                 progress_placeholder = st.empty()
-                progress_placeholder.progress(0, text="Iniciando… 0%")
+                progress_placeholder.progress(done_so_far / n_total if n_total else 0, text=f"Arquivo {done_so_far + 1} de {n_total} ({pct}%) — OCR + LLM…")
+                st.caption("_Um arquivo por vez; a barra atualiza após cada um._")
                 try:
-                    run_processing(progress_placeholder)
+                    has_more = run_processing(progress_placeholder)
+                    if has_more:
+                        st.rerun()
                 except Exception as e:
                     progress_placeholder.empty()
                     st.error(f"Erro: {e}")

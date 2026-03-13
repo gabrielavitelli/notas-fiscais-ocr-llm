@@ -7,6 +7,9 @@
 nf_extraidas*.csv
 nf_extraidas2*.csv
 
+# Evitar packages.txt no repo (quebra build na nuvem se libgl1-mesa-glx não existir)
+packages.txt
+
 # Python
 __pycache__/
 *.py[cod]

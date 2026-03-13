@@ -96,6 +96,20 @@ HF_TOKEN = "hf_seu_token_aqui"
 
 ---
 
+## packages.txt e build na nuvem
+
+Se existir um arquivo **packages.txt** no repositório (ex.: com `libgl1-mesa-glx`), o build pode falhar em ambientes novos do Debian. **Remova-o** para o app abrir na nuvem:
+
+```bash
+git rm packages.txt
+git commit -m "Remove packages.txt para build na nuvem"
+git push origin main
+```
+
+O `.gitignore` já evita subir `packages.txt` de novo. Na nuvem o app não usa DocTR (só visualização/exportação); no PC use `requirements-local.txt` para o fluxo completo com OCR.
+
+---
+
 ## Requisitos no repositório
 
 O Streamlit Cloud precisa encontrar:

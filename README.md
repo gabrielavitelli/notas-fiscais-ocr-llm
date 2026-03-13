@@ -11,16 +11,16 @@ App para **extração estruturada** de dados de notas fiscais (PDF e imagens): O
 Deploy grátis no **Streamlit Community Cloud** → [DEPLOY_NUVEM.md](DEPLOY_NUVEM.md).  
 Depois de publicar, acesse o link (ex.: `https://seu-app.streamlit.app`).
 
-### No seu PC
+### No seu PC (com DocTR — fluxo completo)
 
 ```bash
 cd notas_fiscais
-pip install -r requirements.txt
-pip install python-doctr torch
+pip install -r requirements-local.txt
 streamlit run app.py
 ```
 
-Abra o link no terminal (ex.: `http://localhost:8501`). Configure as chaves no arquivo [.env](.env.example) (copie `.env.example` para `.env` e preencha `GROQ_API_KEY`).
+Abra o link no terminal (ex.: `http://localhost:8501`). Configure as chaves no [.env](.env.example) (copie para `.env` e preencha `GROQ_API_KEY`).  
+O **requirements-local.txt** inclui DocTR + OpenCV headless; a barra de progresso avança a cada arquivo processado.
 
 ---
 
