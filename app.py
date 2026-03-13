@@ -111,18 +111,15 @@ STYLE = """
   [data-testid="stAppViewContainer"] [data-testid="stSelectbox"] span,
   [data-testid="stAppViewContainer"] .stCheckbox label,
   [data-testid="stAppViewContainer"] .stDateInput label { color: #000000 !important; }
-  section.main [data-testid="stFileUploader"] label, section.main [data-testid="stFileUploader"] span,
-  section.main [data-testid="stFileUploader"] section, section.main [data-testid="stFileUploader"] section * { color: #FFFFFF !important; }
   section.main [data-testid="stProgress"] span, section.main [data-testid="stProgress"] label { color: #000000 !important; }
   section.main [data-testid="stProgress"] * { color: #000000 !important; }
+  /* Nome do arquivo (lista de enviados) em preto */
   [data-testid="stAppViewContainer"] [data-testid="stFileUploader"] label,
   [data-testid="stAppViewContainer"] [data-testid="stFileUploader"] span,
   [data-testid="stAppViewContainer"] [data-testid="stFileUploader"] div,
   [data-testid="stAppViewContainer"] [data-testid="stFileUploader"] p,
-  [data-testid="stAppViewContainer"] [data-testid="stFileUploader"] * { color: #FFFFFF !important; }
-  /* Texto da área de drop: "Drag and drop files here" e "Limit 200MB..." em branco */
-  [data-testid="stFileUploader"] section,
-  [data-testid="stFileUploader"] section *,
+  [data-testid="stAppViewContainer"] [data-testid="stFileUploader"] * { color: #000000 !important; }
+  /* Só o texto da área de drop (Drag and drop / Limit 200MB) em branco */
   [data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"],
   [data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"] * { color: #FFFFFF !important; }
   [data-testid="stAppViewContainer"] [data-testid="stProgress"] span,
@@ -297,7 +294,7 @@ def render_sidebar():
         else:
             st.session_state.page = "Sobre"
         st.markdown("---")
-        st.markdown('<div class="nf-sidebar-footer">**Notas Fiscais BR**<br>Extração estruturada com OCR + IA</div>', unsafe_allow_html=True)
+        st.markdown('<div class="nf-sidebar-footer">**Notas Fiscais**<br>Extração estruturada com DocTR e IA</div>', unsafe_allow_html=True)
 
 
 def run_processing(progress_placeholder):
@@ -316,8 +313,8 @@ def run_processing(progress_placeholder):
         model = carregar_modelo_doctr()
     except Exception as e:
         st.warning(
-            "**DocTR não disponível.** Instale no PC: `pip install -r requirements-local.txt` e rode `streamlit run app.py`. "
-            "Na nuvem o app abre só para visualizar e exportar."
+            "**DocTR não carregou.** Se estiver na nuvem, o primeiro deploy pode levar vários minutos; confira os **Logs** em Manage app. "
+            "No PC: `pip install -r requirements-local.txt` e `streamlit run app.py`."
         )
         return False
     api_key = os.environ.get("GROQ_API_KEY")
@@ -518,8 +515,7 @@ def page_inicio():
                 done_so_far = n_total - sum(1 for p in processing if p.get("bytes") and p.get("status") not in ("Finalizado", "Erro"))
                 pct = (done_so_far * 100) // n_total if n_total else 0
                 progress_placeholder = st.empty()
-                progress_placeholder.progress(done_so_far / n_total if n_total else 0, text=f"Arquivo {done_so_far + 1} de {n_total} ({pct}%) — OCR + LLM…")
-                st.caption("_Um arquivo por vez; a barra atualiza após cada um._")
+                progress_placeholder.progress(done_so_far / n_total if n_total else 0, text=f"Arquivo {done_so_far + 1} de {n_total} ({pct}%)")
                 try:
                     has_more = run_processing(progress_placeholder)
                     if has_more:

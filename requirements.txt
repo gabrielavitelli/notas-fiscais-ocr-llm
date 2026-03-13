@@ -1,8 +1,14 @@
-# Mínimo para o app abrir na nuvem (Streamlit Cloud).
-# No PC, para OCR + Sheets: pip install python-doctr[torch] opencv-python-headless gspread google-auth
+# DocTR + PyTorch CPU na nuvem (build pode levar 5–10 min na primeira vez)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.0.0,<2.4
+torchvision>=0.15.0
+opencv-python-headless>=4.8.0
+python-doctr>=0.7.0
 
 streamlit>=1.28.0
 pandas>=2.0.0
 openai>=1.0.0
 Pillow>=10.0.0
 python-dotenv>=1.0.0
+gspread>=6.0.0
+google-auth>=2.0.0
