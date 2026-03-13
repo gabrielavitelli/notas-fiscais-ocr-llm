@@ -226,7 +226,7 @@ STYLE = """
   [data-testid="stAppViewContainer"] .stSelectbox label,
   [data-testid="stAppViewContainer"] .stCheckbox label,
   [data-testid="stAppViewContainer"] .stDateInput label { color: #0F172A !important; }
-  /* Tabela (data_editor): fundo bege e letra preta */
+  /* Tabela (data_editor): fundo bege e letra preta bem visível */
   [data-testid="stDataFrame"],
   div[data-testid="stDataFrame"],
   [data-testid="stDataFrame"] [data-testid="stDataFrameResizable"],
@@ -238,16 +238,32 @@ STYLE = """
   [data-testid="stDataFrame"] tbody td,
   [data-testid="stDataFrame"] div,
   [data-testid="stDataFrame"] span,
-  [data-testid="stDataFrame"] label {
+  [data-testid="stDataFrame"] label,
+  [data-testid="stDataFrame"] p,
+  [data-testid="stDataFrame"] * {
     background-color: #F5F0E8 !important;
-    color: #0F172A !important;
+    color: #000000 !important;
     border-color: #E2E8F0 !important;
   }
   [data-testid="stDataFrame"] input {
     background-color: #FFFFFF !important;
-    color: #0F172A !important;
+    color: #000000 !important;
     border: 1px solid #E2E8F0 !important;
   }
+  /* Glue do Streamlit para tabelas (garante texto preto) */
+  [data-testid="stDataFrame"] [data-testid="stDataFrameResizable"] *,
+  div[data-testid="stDataFrame"] * { color: #000000 !important; }
+  /* Botão Exportar CSV: texto sempre visível (preto em botão claro) */
+  [data-testid="stDownloadButton"] button,
+  [data-testid="stDownloadButton"] button span,
+  [data-testid="stDownloadButton"] a,
+  .stDownloadButton button,
+  .stDownloadButton button span,
+  [data-testid="stAppViewContainer"] [data-testid="stDownloadButton"],
+  [data-testid="stAppViewContainer"] [data-testid="stDownloadButton"] * {
+    color: #0F172A !important;
+  }
+  [data-testid="stDownloadButton"] button { background-color: #E2E8F0 !important; }
 </style>
 """
 
