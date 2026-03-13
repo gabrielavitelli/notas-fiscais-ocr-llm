@@ -218,7 +218,12 @@ def llm_extrair(texto, api_key=None, nomes_pesquisadores=None):
             last_err = e
             if provider:
                 raise
-    raise RuntimeError(f"Nenhuma LLM disponível. Defina GROQ_API_KEY ou HF_TOKEN, ou use LLM_PROVIDER=transformers. Último: {last_err}") from last_err
+    raise RuntimeError(
+        "Nenhuma LLM disponível. Defina uma chave (uma vez só): "
+        "No PC: crie/edite o arquivo .env na pasta do projeto com GROQ_API_KEY=... (copie de .env.example). "
+        "Na nuvem: share.streamlit.io → seu app → Settings → Secrets → adicione GROQ_API_KEY ou HF_TOKEN. "
+        "O .env não é enviado ao GitHub. Último erro: " + str(last_err)
+    ) from last_err
 
 
 # --- 3) Google Sheets: append linha ---

@@ -33,6 +33,32 @@ import streamlit as st
 
 # nf_ocr é importado só ao processar (evita travar o deploy com deps pesadas)
 
+
+def _load_secrets_to_env():
+    """Coloca GROQ_API_KEY e HF_TOKEN de st.secrets em os.environ (Streamlit Cloud)."""
+    try:
+        sk = getattr(st, "secrets", None)
+        if sk is None:
+            return
+        sources = [sk]
+        try:
+            if hasattr(sk, "get") and sk.get("default") is not None:
+                sources.append(sk["default"])
+        except (KeyError, TypeError):
+            pass
+        for name, env_key in [("GROQ_API_KEY", "GROQ_API_KEY"), ("groq_api_key", "GROQ_API_KEY"), ("HF_TOKEN", "HF_TOKEN"), ("hf_token", "HF_TOKEN")]:
+            for src in sources:
+                try:
+                    v = src[name] if hasattr(src, "__getitem__") else (src.get(name) if hasattr(src, "get") else None)
+                    if isinstance(v, str) and v.strip():
+                        os.environ[env_key] = v.strip()
+                        break
+                except (KeyError, TypeError, AttributeError):
+                    pass
+    except Exception:
+        pass
+
+
 VERSION = "1.0.0"
 LAST_UPDATE = "2025-03"
 
@@ -400,7 +426,9 @@ def run_processing(progress_placeholder):
         st.session_state.metrics = metrics
         _save_state()
         return False
-    api_key = os.environ.get("GROQ_API_KEY")
+    # Garante que Secrets estão em os.environ antes de chamar nf_ocr (mesmo após rerun)
+    _load_secrets_to_env()
+    api_key = os.environ.get("GROQ_API_KEY") or os.environ.get("groq_api_key")
     nomes_pesquisadores = list(st.session_state.get("lista_pesquisadores", []))
     results = list(st.session_state.get("results", []))
     metrics = st.session_state.get("metrics", {})
@@ -556,7 +584,12 @@ def page_inicio():
                     groq = os.environ.get("GROQ_API_KEY", "")
                     hf = os.environ.get("HF_TOKEN", "")
                     if not groq and not hf:
-                        st.error("⚠️ Configure o arquivo **.env** na pasta do projeto com **GROQ_API_KEY** ou **HF_TOKEN**.")
+                        st.error(
+                            "⚠️ **Chave de API não definida.** Uma vez configurada, não precisa definir de novo.\n\n"
+                            "**No seu PC:** crie ou edite o arquivo **.env** na pasta do projeto (copie de **.env.example** e coloque sua chave). "
+                            "O **.env não sobe pro GitHub** (está no .gitignore).\n\n"
+                            "**Na nuvem:** em [share.streamlit.io](https://share.streamlit.io) → seu app → **Settings** → **Secrets** → adicione `GROQ_API_KEY` ou `HF_TOKEN`."
+                        )
                         return
                     if groq:
                         os.environ["GROQ_API_KEY"] = groq
@@ -731,6 +764,22 @@ def page_revisar():
 
 def page_configuracoes():
     st.subheader("⚙️ Configurações")
+
+    # Debug: indica se as chaves de API foram lidas (.env ou Streamlit Secrets)
+    _load_secrets_to_env()
+    groq_ok = bool((os.environ.get("GROQ_API_KEY") or os.environ.get("groq_api_key") or "").strip())
+    hf_ok = bool((os.environ.get("HF_TOKEN") or os.environ.get("hf_token") or "").strip())
+    st.markdown("**🔑 Chaves de API (debug)**")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.caption(f"**GROQ_API_KEY:** {'✅ sim' if groq_ok else '❌ não'}")
+    with c2:
+        st.caption(f"**HF_TOKEN:** {'✅ sim' if hf_ok else '❌ não'}")
+    if not groq_ok and not hf_ok:
+        st.warning("Nenhuma chave configurada. **Na nuvem:** share.streamlit.io → seu app → **Settings** → **Secrets** → adicione `GROQ_API_KEY` ou `HF_TOKEN` (formato TOML). **No PC:** crie o arquivo `.env` na pasta do projeto com a mesma variável.")
+    else:
+        st.caption("Pelo menos uma chave está disponível para extração com IA.")
+    st.markdown("---")
     st.markdown("**📁 Planilha no Drive (ou pasta local)**")
     st.caption("**Por padrão** os dados são salvos em **nf_dados/** (CSV, estado e log). Deixe vazio para usar esse padrão. Se quiser outro local (ex.: pasta do Google Drive), informe o caminho completo do arquivo CSV.")
     default_hint = str(_default_csv_path()) if _default_csv_path() else "nf_dados/nf_extraidas.csv"
@@ -827,12 +876,7 @@ def main():
         st.set_page_config(page_title="Registo Notas Fiscais", page_icon="📄", layout="wide", initial_sidebar_state="expanded")
     except Exception:
         pass  # set_page_config só pode rodar uma vez
-    try:
-        for k, v in (getattr(st, "secrets", None) or {}).items():
-            if isinstance(v, str) and str(k).isupper():
-                os.environ.setdefault(str(k), v)
-    except Exception:
-        pass
+    _load_secrets_to_env()
     inject_css()
     _ensure_dados_dir()
     try:
