@@ -194,7 +194,7 @@ def _llm_transformers(prompt):
 def llm_extrair(texto, api_key=None, nomes_pesquisadores=None):
     """Ordem: Groq (grátis) -> Hugging Face -> Transformers (local, sem chave).
     nomes_pesquisadores: lista de nomes para a IA preferir em nome_comprador quando o documento se referir ao comprador."""
-    texto = texto[:12000]
+    texto = texto[:8000]
     prompt = _build_prompt(texto, nomes_pesquisadores)
     groq_key = os.environ.get("GROQ_API_KEY") or api_key
     hf_token = os.environ.get("HF_TOKEN")

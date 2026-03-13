@@ -109,14 +109,20 @@ STYLE = """
   [data-testid="stAppViewContainer"] [data-testid="stSelectbox"] span,
   [data-testid="stAppViewContainer"] .stCheckbox label,
   [data-testid="stAppViewContainer"] .stDateInput label { color: #000000 !important; }
-  section.main [data-testid="stFileUploader"] label, section.main [data-testid="stFileUploader"] span { color: #000000 !important; }
+  section.main [data-testid="stFileUploader"] label, section.main [data-testid="stFileUploader"] span,
+  section.main [data-testid="stFileUploader"] section, section.main [data-testid="stFileUploader"] section * { color: #FFFFFF !important; }
   section.main [data-testid="stProgress"] span, section.main [data-testid="stProgress"] label { color: #000000 !important; }
   section.main [data-testid="stProgress"] * { color: #000000 !important; }
   [data-testid="stAppViewContainer"] [data-testid="stFileUploader"] label,
   [data-testid="stAppViewContainer"] [data-testid="stFileUploader"] span,
   [data-testid="stAppViewContainer"] [data-testid="stFileUploader"] div,
   [data-testid="stAppViewContainer"] [data-testid="stFileUploader"] p,
-  [data-testid="stAppViewContainer"] [data-testid="stFileUploader"] * { color: #000000 !important; }
+  [data-testid="stAppViewContainer"] [data-testid="stFileUploader"] * { color: #FFFFFF !important; }
+  /* Texto da área de drop: "Drag and drop files here" e "Limit 200MB..." em branco */
+  [data-testid="stFileUploader"] section,
+  [data-testid="stFileUploader"] section *,
+  [data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"],
+  [data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"] * { color: #FFFFFF !important; }
   [data-testid="stAppViewContainer"] [data-testid="stProgress"] span,
   [data-testid="stAppViewContainer"] [data-testid="stProgress"] label,
   [data-testid="stAppViewContainer"] [data-testid="stProgress"] * { color: #000000 !important; }
@@ -293,10 +299,19 @@ def render_sidebar():
 
 
 def run_processing(progress_placeholder):
+    """Processa um arquivo por vez e retorna True se ainda há mais para processar (rerun para continuar)."""
     processing = st.session_state.get("processing", [])
     to_run = [i for i, p in enumerate(processing) if p.get("bytes") and p.get("status") not in ("Finalizado", "Erro")]
+    n_total = len(processing)
     if not to_run:
-        return
+        return False
+    # Número já concluídos antes desta rodada (para a barra refletir o progresso real)
+    done_before = n_total - len(to_run)
+    i = to_run[0]
+    item = processing[i]
+    name = item["name"]
+
+    progress_placeholder.progress(done_before / n_total, text=f"Arquivo {done_before + 1} de {n_total} — preparando…")
     try:
         model = carregar_modelo_doctr()
     except Exception as e:
@@ -306,7 +321,7 @@ def run_processing(progress_placeholder):
             "Para **processar** notas fiscais (upload → OCR → extração), rode no seu PC: "
             "`pip install python-doctr[torch] opencv-python-headless` e depois `streamlit run app.py`."
         )
-        return
+        return False
     api_key = os.environ.get("GROQ_API_KEY")
     nomes_pesquisadores = list(st.session_state.get("lista_pesquisadores", []))
     results = list(st.session_state.get("results", []))
@@ -314,6 +329,9 @@ def run_processing(progress_placeholder):
     csv_drive_path = (st.session_state.get("csv_drive_path") or "").strip()
     use_drive_csv = bool(csv_drive_path)
     ja_incluidos = []
+
+    progress_placeholder.progress(done_before / n_total, text=f"Arquivo {done_before + 1} de {n_total} — OCR + extração…")
+    st.session_state.processing[i]["status"] = "OCR"
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)
         if use_drive_csv:
@@ -324,66 +342,65 @@ def run_processing(progress_placeholder):
                 pass
         else:
             csv_path = tmpdir / "nf_extraidas.csv"
-        n_total = len(to_run)
-        for idx, i in enumerate(to_run):
-            item = processing[i]
-            name = item["name"]
-            progress_placeholder.progress((idx + 0.15) / n_total, text=f"Arquivo {idx+1} de {n_total}")
-            st.session_state.processing[i]["status"] = "Validando"
-            path = tmpdir / (name or f"file_{i}")
-            path.write_bytes(item["bytes"])
-            progress_placeholder.progress((idx + 0.4) / n_total, text=f"OCR e extração… {idx+1}/{n_total}")
-            st.session_state.processing[i]["status"] = "OCR"
-            t0 = time.time()
-            try:
-                import nf_ocr
-                ok, dados = nf_ocr.processar_arquivo(
-                    path, model, api_key, sheet_id=None, creds_path=None,
-                    csv_path=str(csv_path), dry_run=False, nomes_pesquisadores=nomes_pesquisadores,
-                )
-                elapsed = time.time() - t0
-                if ok and dados is not None:
-                    st.session_state.processing[i]["status"] = "Finalizado"
-                    rec = nf_ocr.registro_from_dados(dados)
-                    rec["_elapsed_sec"] = round(elapsed, 1)
-                    results.append(rec)
-                    score = (rec.get("score_revisao") or "").strip().lower()
-                    if score == "revisar":
-                        metrics["revisar"] = metrics.get("revisar", 0) + 1
-                        _append_log_duvida("revisar", name, "Nota marcada para revisar (falta dado ou incoerência)", rec.get("numero_nf"))
-                    elif score == "verificar":
-                        metrics["verificar"] = metrics.get("verificar", 0) + 1
-                        _append_log_duvida("verificar", name, "Nota com dúvida (verificar)", rec.get("numero_nf"))
-                elif ok and dados is None:
-                    st.session_state.processing[i]["status"] = "Já incluído (não duplicado)"
-                    ja_incluidos.append(name)
-                else:
-                    st.session_state.processing[i]["status"] = "Erro"
-                    metrics["erros_total"] = metrics.get("erros_total", 0) + 1
-                    _append_log_duvida("erro", name, "Processamento falhou", None)
-            except Exception as e:
-                err_msg = str(e)[:60]
-                st.session_state.processing[i]["status"] = f"Erro: {err_msg}"
+        path = tmpdir / (name or f"file_{i}")
+        path.write_bytes(item["bytes"])
+        t0 = time.time()
+        try:
+            import nf_ocr
+            ok, dados = nf_ocr.processar_arquivo(
+                path, model, api_key, sheet_id=None, creds_path=None,
+                csv_path=str(csv_path), dry_run=False, nomes_pesquisadores=nomes_pesquisadores,
+            )
+            elapsed = time.time() - t0
+            if ok and dados is not None:
+                st.session_state.processing[i]["status"] = "Finalizado"
+                rec = nf_ocr.registro_from_dados(dados)
+                rec["_elapsed_sec"] = round(elapsed, 1)
+                results.append(rec)
+                score = (rec.get("score_revisao") or "").strip().lower()
+                if score == "revisar":
+                    metrics["revisar"] = metrics.get("revisar", 0) + 1
+                    _append_log_duvida("revisar", name, "Nota marcada para revisar (falta dado ou incoerência)", rec.get("numero_nf"))
+                elif score == "verificar":
+                    metrics["verificar"] = metrics.get("verificar", 0) + 1
+                    _append_log_duvida("verificar", name, "Nota com dúvida (verificar)", rec.get("numero_nf"))
+            elif ok and dados is None:
+                st.session_state.processing[i]["status"] = "Já incluído (não duplicado)"
+                ja_incluidos.append(name)
+            else:
+                st.session_state.processing[i]["status"] = "Erro"
                 metrics["erros_total"] = metrics.get("erros_total", 0) + 1
-                _append_log_duvida("erro", name, err_msg, None)
-            st.session_state.processing[i]["progress"] = (idx + 1) / n_total * 100
-            progress_placeholder.progress((idx + 1) / n_total, text=f"Concluído {idx+1}/{n_total}")
+                _append_log_duvida("erro", name, "Processamento falhou", None)
+        except Exception as e:
+            err_msg = str(e)[:60]
+            st.session_state.processing[i]["status"] = f"Erro: {err_msg}"
+            metrics["erros_total"] = metrics.get("erros_total", 0) + 1
+            _append_log_duvida("erro", name, err_msg, None)
+
+    st.session_state.processing[i]["progress"] = (done_before + 1) / n_total * 100
+    progress_placeholder.progress((done_before + 1) / n_total, text=f"Arquivo {done_before + 1} de {n_total} concluído ({(done_before + 1) * 100 // n_total}%)")
+    st.session_state.processing[i].pop("bytes", None)
     if ja_incluidos:
         st.session_state.ultimos_ja_incluidos = ja_incluidos
-    for p in st.session_state.processing:
-        p.pop("bytes", None)
     st.session_state.results = results
-    finished = len([p for p in st.session_state.processing if p.get("status") == "Finalizado"])
-    st.session_state.metrics["files_total"] = st.session_state.metrics.get("files_total", 0) + finished
-    if results:
-        times = [r.get("_elapsed_sec", 0) for r in results if "_elapsed_sec" in r]
-        if times:
-            st.session_state.metrics["avg_ocr_sec"] = round(sum(times) / len(times), 1)
-    total = len(st.session_state.processing)
-    ok_count = len([p for p in st.session_state.processing if p.get("status") == "Finalizado"])
-    st.session_state.metrics["success_rate"] = round(100 * ok_count / total, 0) if total else 100
-    st.session_state.ultima_execucao = datetime.now().strftime("hoje %H:%M")
-    _save_state()
+    st.session_state.metrics.update(metrics)
+
+    if len(to_run) == 1:
+        for p in st.session_state.processing:
+            p.pop("bytes", None)
+        finished = len([p for p in st.session_state.processing if p.get("status") == "Finalizado"])
+        st.session_state.metrics["files_total"] = st.session_state.metrics.get("files_total", 0) + finished
+        if results:
+            times = [r.get("_elapsed_sec", 0) for r in results if "_elapsed_sec" in r]
+            if times:
+                st.session_state.metrics["avg_ocr_sec"] = round(sum(times) / len(times), 1)
+        total = len(st.session_state.processing)
+        ok_count = len([p for p in st.session_state.processing if p.get("status") == "Finalizado"])
+        st.session_state.metrics["success_rate"] = round(100 * ok_count / total, 0) if total else 100
+        st.session_state.ultima_execucao = datetime.now().strftime("hoje %H:%M")
+        _save_state()
+        return False
+    return True
 
 
 def results_to_dataframe(results=None):
@@ -502,14 +519,15 @@ def page_inicio():
             st.markdown("#### 2️⃣ Processamento")
             has_pending = any(p.get("bytes") for p in processing)
             if has_pending:
-                with st.spinner("⏳ Processando… aguarde."):
-                    progress_placeholder = st.empty()
-                    progress_placeholder.progress(0, text="Iniciando…")
-                    try:
-                        run_processing(progress_placeholder)
-                    except Exception as e:
-                        progress_placeholder.empty()
-                        st.error(f"Erro: {e}")
+                progress_placeholder = st.empty()
+                progress_placeholder.progress(0, text="Iniciando… 0%")
+                try:
+                    has_more = run_processing(progress_placeholder)
+                    if has_more:
+                        st.rerun()
+                except Exception as e:
+                    progress_placeholder.empty()
+                    st.error(f"Erro: {e}")
                 st.rerun()
 
             for item in processing:
