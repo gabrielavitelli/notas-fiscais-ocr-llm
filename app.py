@@ -478,8 +478,15 @@ def run_processing(progress_placeholder):
                 metrics["erros_total"] = metrics.get("erros_total", 0) + 1
                 _append_log_duvida("erro", name, "Processamento falhou", None)
         except Exception as e:
-            err_msg = str(e)[:60]
+            err_full = str(e).strip()
+            err_msg = err_full[:320] if len(err_full) > 320 else err_full
             st.session_state.processing[i]["status"] = f"Erro: {err_msg}"
+            if "Nenhuma LLM disponível" in err_full or "LLM" in err_full:
+                cause = getattr(e, "__cause__", None)
+                st.session_state["llm_last_error"] = {
+                    "msg": err_full,
+                    "detail": str(cause) if cause else None,
+                }
             metrics["erros_total"] = metrics.get("erros_total", 0) + 1
             _append_log_duvida("erro", name, err_msg, None)
 
@@ -632,6 +639,16 @@ def page_inicio():
                 st.code(err_info.get("tb", ""), language="text")
             if st.button("Limpar esta mensagem"):
                 del st.session_state["doctr_last_error"]
+                st.rerun()
+        if st.session_state.get("llm_last_error"):
+            err_info = st.session_state.llm_last_error
+            st.markdown("---")
+            st.error("**Erro na LLM (extração com IA)** — veja o detalhe abaixo; costuma ser chave inválida ou limite da API.")
+            st.code(err_info.get("msg", ""), language="text")
+            if err_info.get("detail"):
+                st.caption(f"Causa: {err_info['detail']}")
+            if st.button("Limpar esta mensagem", key="clear_llm_err"):
+                del st.session_state["llm_last_error"]
                 st.rerun()
         if processing:
             st.markdown("---")
