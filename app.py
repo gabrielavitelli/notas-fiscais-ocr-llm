@@ -226,46 +226,16 @@ STYLE = """
   [data-testid="stAppViewContainer"] .stSelectbox label,
   [data-testid="stAppViewContainer"] .stCheckbox label,
   [data-testid="stAppViewContainer"] .stDateInput label { color: #0F172A !important; }
-  /* Tabela (data_editor): fundo bege e texto PRETO — regras fortes para sobrepor tema */
-  [data-testid="stDataFrame"],
-  div[data-testid="stDataFrame"],
-  [data-testid="stDataFrame"] [data-testid="stDataFrameResizable"],
-  [data-testid="stDataFrame"] > div,
-  [data-testid="stDataFrame"] table,
-  [data-testid="stDataFrame"] thead,
-  [data-testid="stDataFrame"] thead th,
-  [data-testid="stDataFrame"] tbody,
-  [data-testid="stDataFrame"] tbody td,
-  [data-testid="stDataFrame"] div,
-  [data-testid="stDataFrame"] span,
-  [data-testid="stDataFrame"] label,
-  [data-testid="stDataFrame"] p,
-  [data-testid="stDataFrame"] * {
-    background-color: #F5F0E8 !important;
-    color: #000000 !important;
-    border-color: #E2E8F0 !important;
+  /* Tabela de resultados: contorno escuro elegante, sem fundo (texto usa tema) */
+  [data-testid="stDataFrame"] {
+    border: 1px solid #1e293b !important;
+    border-radius: 8px !important;
+    box-shadow: 0 1px 3px rgba(30, 41, 59, 0.08) !important;
+    overflow: hidden !important;
   }
-  [data-testid="stDataFrame"] input {
-    background-color: #FFFFFF !important;
-    color: #000000 !important;
-    border: 1px solid #E2E8F0 !important;
+  [data-testid="stDataFrame"] table {
+    border: none !important;
   }
-  /* Forçar preto em qualquer descendente da tabela (sobrepõe tema/variaveis) */
-  [data-testid="stDataFrame"] [data-testid="stDataFrameResizable"] *,
-  div[data-testid="stDataFrame"] *,
-  [data-testid="stDataFrame"] *,
-  [data-testid="stDataFrame"] table *,
-  [data-testid="stDataFrame"] td *,
-  [data-testid="stDataFrame"] th *,
-  [data-testid="stDataFrame"] div[role="cell"],
-  [data-testid="stDataFrame"] div[role="columnheader"],
-  [data-testid="stDataFrame"] .stDataFrame * { color: #000000 !important; }
-  /* Wrapper opcional: se a tabela estiver dentro de .nf-tabela-bege */
-  .nf-tabela-bege,
-  .nf-tabela-bege *,
-  .nf-tabela-bege [data-testid="stDataFrame"],
-  .nf-tabela-bege [data-testid="stDataFrame"] * { color: #000000 !important; background-color: #F5F0E8 !important; }
-  .nf-tabela-bege [data-testid="stDataFrame"] input { background-color: #FFFFFF !important; color: #000000 !important; }
   /* Botão Exportar CSV: texto sempre visível (preto em botão claro) */
   [data-testid="stDownloadButton"] button,
   [data-testid="stDownloadButton"] button span,
@@ -802,10 +772,13 @@ def page_inicio():
                 filtered = [r for r in filtered if (r.get("nome_comprador") or "").strip() == filtro_pesq]
 
             df = results_to_dataframe(filtered)
-            # Estilo inline garante texto preto e fundo bege (sobrepõe tema do Streamlit)
-            styled = df.style.set_properties(
-                **{"color": "#000000", "background-color": "#F5F0E8"}
-            )
+            # Contorno escuro e minimalista; sem fundo para o texto usar a cor do tema (visível)
+            styled = df.style.set_table_styles([
+                {"selector": "table", "props": [("border", "1px solid #1e293b"), ("border-collapse", "collapse"), ("border-radius", "8px")]},
+                {"selector": "thead th", "props": [("border-bottom", "2px solid #1e293b"), ("border-right", "1px solid #334155")]},
+                {"selector": "tbody td", "props": [("border-bottom", "1px solid #e2e8f0"), ("border-right", "1px solid #e2e8f0")]},
+                {"selector": "th:first-child, td:first-child", "props": [("border-left", "1px solid #334155")]},
+            ])
             st.dataframe(
                 styled,
                 use_container_width=True,
