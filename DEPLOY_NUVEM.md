@@ -128,6 +128,36 @@ em “Main file path” use: **`notas_fiscais/app.py`** e coloque o `requirement
 
 ---
 
+## O app não atualiza ou continua com erro?
+
+### 1. Confirme que o push para o GitHub deu certo
+
+Depois de rodar `deploy_github.bat`:
+
+- Se aparecer **"*** PUSH FALHOU! ***"**, o código **não** foi para o GitHub e o Streamlit **não** atualiza. Corrija o push (ex.: `git stash` → `git pull origin main --rebase` → `git push origin main` → `git stash pop`).
+- Se aparecer **"[OK] Push concluído"** e a URL do repositório, o código foi enviado.
+
+### 2. Veja no GitHub se o código está lá
+
+- Abra o repositório no navegador: `https://github.com/SEU_USUARIO/NOME_DO_REPO`.
+- Veja se os arquivos que você mudou (ex.: `app.py`) têm a data/hora do último commit. Se não tiverem, o push não subiu.
+
+### 3. Link do app e rebuild no Streamlit Cloud
+
+- O link do app **não muda**: é sempre o que você viu no primeiro deploy (ex.: `https://nomedoseuapp.streamlit.app`).
+- Em [share.streamlit.io](https://share.streamlit.io) → **Your apps** → clique no app.
+- Em **"Manage app"** (ou os três pontinhos):
+  - **"Reboot app"** — reinicia com o código que já está no GitHub.
+  - **"Logs"** — mostra erros se o app não abrir (ex.: módulo faltando, libGL, etc.).
+
+Depois de um **push com sucesso**, o Streamlit costuma reconstruir sozinho em 2–5 minutos. Se não reconstruir, use **"Reboot app"**.
+
+### 4. Main file path
+
+Se o repositório tiver uma **pasta** (ex.: `notas_fiscais/app.py`), no Streamlit Cloud o **Main file path** tem de ser `notas_fiscais/app.py`. Se estiver como só `app.py`, o app não acha o arquivo e pode dar erro genérico.
+
+---
+
 ## Resumo
 
 1. Subir código no **GitHub** (sem `.env`).
