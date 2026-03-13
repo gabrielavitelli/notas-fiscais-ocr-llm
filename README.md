@@ -9,7 +9,7 @@ App para **extração estruturada** de dados de notas fiscais (PDF e imagens): O
 ### Na nuvem (PC desligado)
 
 Deploy grátis no **Streamlit Community Cloud** → [DEPLOY_NUVEM.md](DEPLOY_NUVEM.md).  
-Depois de publicar, acesse o link (ex.: `https://seu-app.streamlit.app`).
+Se o build falhar com `libgl1-mesa-glx`, remova o arquivo do repo: `git rm packages.txt` → commit → push.
 
 ### No seu PC (com DocTR — fluxo completo)
 

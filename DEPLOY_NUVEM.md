@@ -98,15 +98,16 @@ HF_TOKEN = "hf_seu_token_aqui"
 
 ## packages.txt e build na nuvem
 
-Se existir um arquivo **packages.txt** no repositório (ex.: com `libgl1-mesa-glx`), o build pode falhar em ambientes novos do Debian. **Remova-o** para o app abrir na nuvem:
+**Se o build falhar com** `Package 'libgl1-mesa-glx' has no installation candidate`, é porque ainda existe **packages.txt** no repositório. Remova-o:
 
 ```bash
+cd notas_fiscais
 git rm packages.txt
 git commit -m "Remove packages.txt para build na nuvem"
 git push origin main
 ```
 
-O `.gitignore` já evita subir `packages.txt` de novo. Na nuvem o app não usa DocTR (só visualização/exportação); no PC use `requirements-local.txt` para o fluxo completo com OCR.
+O `.gitignore` evita subir `packages.txt` de novo. Sem esse arquivo o build das dependências Python (DocTR, etc.) segue normalmente.
 
 ---
 
