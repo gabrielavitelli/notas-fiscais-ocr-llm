@@ -1,3 +1,0 @@
-# No Debian Trixie (Streamlit Cloud), libgl1-mesa-glx não existe; usar libgl1 (substituto).
-# Necessário para OpenCV/DocTR carregar em ambiente headless.
-libgl1

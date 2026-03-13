@@ -7,6 +7,9 @@
 nf_extraidas*.csv
 nf_extraidas2*.csv
 
+# packages.txt: se existir com libgl1, pode quebrar o build em alguns ambientes; remover e push para subir sem ele
+packages.txt
+
 # Python
 __pycache__/
 *.py[cod]

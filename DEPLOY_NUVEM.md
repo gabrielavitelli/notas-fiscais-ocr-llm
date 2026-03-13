@@ -6,7 +6,7 @@ Para o **Notas Fiscais** ficar acessível 24/7 pela internet, mesmo com o seu co
 
 ## Antes do deploy — checklist
 
-- [ ] **`packages.txt`** está no repositório com `libgl1` (ajuda o DocTR a carregar na nuvem). Se o build do apt falhar, remova-o com `git rm packages.txt` e push.
+- [ ] **Não inclua `packages.txt`** no repositório — em muitos ambientes do Streamlit Cloud o apt falha e o build quebra. Sem ele o app sobe; o DocTR pode não carregar na nuvem (use no PC para OCR completo).
 - [ ] **`.env` não vai para o GitHub** (já está no `.gitignore`; use **Secrets** no painel do Streamlit para chaves).
 - [ ] **`requirements.txt`** está na pasta do app (ou na raiz do repo) com as dependências; o primeiro build (DocTR + PyTorch) pode levar 5–15 min.
 - [ ] **Main file path** no Streamlit Cloud aponta para o arquivo certo (ex.: `app.py` ou `notas_fiscais/app.py` se estiver em subpasta).
@@ -110,17 +110,9 @@ HF_TOKEN = "hf_seu_token_aqui"
 
 ## packages.txt e build na nuvem
 
-O projeto usa **packages.txt** com `libgl1` (pacote disponível no Debian Trixie usado pelo Streamlit Cloud). Isso evita o erro "libGL.so.1: cannot open shared object file" ao carregar o DocTR/OpenCV.
+**Não use `packages.txt`** no repositório. Em vários ambientes do Streamlit Cloud a instalação de pacotes apt falha ("Error installing requirements") e o build não conclui. Sem esse arquivo, as dependências Python (Streamlit, DocTR, PyTorch, etc.) instalam normalmente e o app sobe.
 
-**Se o build falhar** ao instalar dependências do apt (por exemplo, "Package 'libgl1' has no installation candidate"), remova o arquivo e faça push:
-
-```bash
-git rm packages.txt
-git commit -m "Remove packages.txt (build sem libs do sistema)"
-git push origin main
-```
-
-Nesse caso o app sobe, mas o DocTR pode não carregar na nuvem (use o app no PC para OCR completo).
+Na nuvem o **DocTR pode não carregar** (erro "DocTR não carregou" ao processar) por falta de bibliotecas do sistema; use o app **no seu PC** com `pip install -r requirements-local.txt` e `streamlit run app.py` para OCR completo. Na nuvem você pode usar o app para exportar CSV e consultar dados.
 
 ---
 
