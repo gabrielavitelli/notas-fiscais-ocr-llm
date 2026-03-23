@@ -24,6 +24,7 @@ if _env_path.exists():
 
 import json
 import io
+import re
 import tempfile
 import time
 import csv as csv_module
@@ -32,6 +33,7 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 # nf_ocr é importado só ao processar (evita travar o deploy com deps pesadas)
 
@@ -265,6 +267,8 @@ STYLE = """
   .nf-status { display: inline-flex; align-items: center; padding: 0.35rem 0.75rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 500; background: #D1FAE5; color: #059669 !important; }
   .nf-postit { background: #FEF3C7; border-radius: 10px; padding: 0.75rem 1rem; border-left: 4px solid #F59E0B; font-size: 0.875rem; margin-bottom: 0.5rem; color: #000000 !important; }
   .stButton > button[kind="primary"] { background: #2563EB !important; color: #FFFFFF !important; border: none !important; font-weight: 600 !important; border-radius: 10px !important; }
+  .stFormSubmitButton > button { background: #2563EB !important; color: #FFFFFF !important; border: none !important; font-weight: 600 !important; border-radius: 10px !important; }
+  .stFormSubmitButton > button span { color: #FFFFFF !important; }
   /* Widgets na área principal: labels em preto */
   section.main [data-testid="stRadio"] label, section.main [data-testid="stRadio"] span,
   section.main [data-testid="stSelectbox"] label, section.main [data-testid="stSelectbox"] span,
@@ -674,6 +678,11 @@ def run_processing(progress_placeholder):
                 rec = nf_ocr.registro_from_dados(dados)
                 rec["_elapsed_sec"] = round(elapsed, 1)
                 rec["_ocr_text"] = (ocr_text or "").strip()
+                # Pré-processa a estrutura da nota (quando houver linhas tipo extrato)
+                # para o Excel já sair no formato detalhado imediatamente.
+                struct_df = _extract_struct_rows_from_record(rec)
+                if not struct_df.empty:
+                    rec["_excel_struct_rows"] = struct_df.to_dict(orient="records")
                 results.append(rec)
                 score = (rec.get("score_revisao") or "").strip().lower()
                 if score == "revisar":
@@ -815,11 +824,600 @@ def _build_excel_despesas_refeicoes(results=None):
                 "Moeda": r.get("moeda", "BRL"),
             }
         )
-    df_excel = pd.DataFrame(rows)
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        df_excel.to_excel(writer, index=False, sheet_name="Prestacao_Contas")
+        # Para uma nota única, prioriza estrutura detalhada em UMA aba só.
+        if len(results) == 1:
+            det_df = _extract_struct_rows_from_record(results[0])
+            # Só considera estrutura quando realmente extraiu valor/total.
+            det_ok = (
+                not det_df.empty
+                and "VALOR" in det_df.columns
+                and "TOTAL" in det_df.columns
+                and det_df[["VALOR", "TOTAL"]].astype(str).apply(lambda s: s.str.strip()).ne("").any().any()
+            )
+            if det_ok:
+                det_df.to_excel(writer, index=False, sheet_name="Prestacao_Contas")
+                _style_structured_worksheet(writer.book["Prestacao_Contas"])
+            else:
+                pd.DataFrame(rows).to_excel(writer, index=False, sheet_name="Prestacao_Contas")
+        else:
+            pd.DataFrame(rows).to_excel(writer, index=False, sheet_name="Prestacao_Contas")
     return buffer.getvalue()
+
+
+def _style_structured_worksheet(ws):
+    """Aplica visual semelhante ao extrato da nota."""
+    header_fill = PatternFill(fill_type="solid", start_color="D9D9D9", end_color="D9D9D9")
+    thin = Side(border_style="thin", color="808080")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    # Cabeçalho
+    for cell in ws[1]:
+        cell.font = Font(bold=True, color="1F2937")
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = border
+
+    # Corpo
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+        for cell in row:
+            cell.border = border
+            cell.alignment = Alignment(vertical="center")
+
+    # Alinhamentos por coluna
+    col_idx = {ws.cell(row=1, column=i).value: i for i in range(1, ws.max_column + 1)}
+    for name in ("DATA",):
+        idx = col_idx.get(name)
+        if idx:
+            for r in range(2, ws.max_row + 1):
+                ws.cell(row=r, column=idx).alignment = Alignment(horizontal="center", vertical="center")
+    for name in ("VALOR", "TOTAL"):
+        idx = col_idx.get(name)
+        if idx:
+            for r in range(2, ws.max_row + 1):
+                ws.cell(row=r, column=idx).alignment = Alignment(horizontal="right", vertical="center")
+
+    # Larguras aproximadas
+    widths = {"A": 12, "B": 54, "C": 14, "D": 14}
+    for col_letter, width in widths.items():
+        if ws.column_dimensions.get(col_letter) is not None:
+            ws.column_dimensions[col_letter].width = width
+
+
+def _extract_ocr_table_rows(ocr_text):
+    text = str(ocr_text or "")
+    if not text.strip():
+        return pd.DataFrame()
+
+    # Formato em uma linha (quando OCR já junta tudo).
+    full_line_pattern = re.compile(
+        r"(?P<data>\d{2}/\d{2}/\d{4})[:\s]+"
+        r"(?P<hora>\d{2}:\d{2})\s+"
+        r"(?P<orig>\d+)"
+        r"(?:\s+(?P<comanda>\d+))?\s+"
+        r"(?P<produto>.+?)\s+"
+        r"(?P<qtde>\d+,\d{3})\s+R\$\s*"
+        r"(?P<valor>[0-9\.,]+)\s+R\$\s*"
+        r"(?P<total>[0-9\.,]+)\s*$",
+        flags=re.IGNORECASE,
+    )
+    # Formato da primeira linha (data/hora/comanda/produto) sem valores.
+    head_pattern = re.compile(
+        r"^(?P<data>\d{2}/\d{2}/\d{4})[:\s]+"
+        r"(?P<hora>\d{2}:\d{2})\s+"
+        r"(?:(?P<orig>\d+)\s+)?"
+        r"(?:(?P<comanda>\d+)\s+)?"
+        r"(?P<produto>.+?)$",
+        flags=re.IGNORECASE,
+    )
+    def _normalize_money_text(v):
+        s = str(v or "").replace("\t", "").replace(" ", "")
+        if not s:
+            return ""
+        s = s.replace(".", ",")
+        if "," not in s and s.isdigit():
+            return f"{s},00"
+        if "," in s:
+            left, right = s.split(",", 1)
+            if len(right) == 1:
+                right = right + "0"
+            elif len(right) > 2:
+                right = right[:2]
+            return f"{left},{right}"
+        return s
+
+    # Formato da segunda linha (qtde + valor + total).
+    money_pattern = re.compile(
+        r"^(?P<qtde>\d+[,\.\s]?\d{3})\s+R\$\s*(?P<valor>[0-9\.,\s]+)(?:\s+R\$\s*(?P<total>[0-9\.,\s]+))?\s*$",
+        flags=re.IGNORECASE,
+    )
+    total_only_pattern = re.compile(r"^R\$\s*(?P<total>[0-9\.,\s]+)\s*$", flags=re.IGNORECASE)
+    total_line_pattern = re.compile(
+        r"^(?P<label>TOTAL\s+[A-ZÁÀÃÂÉÊÍÓÔÕÚÇ\s]+)\s+(?P<qtde>\d+,\d{3})\s+R\$\s*(?P<total>[0-9\.,]+)\s*$",
+        flags=re.IGNORECASE,
+    )
+
+    lines = [" ".join(raw.strip().split()) for raw in text.splitlines() if raw and raw.strip()]
+    rows = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        # 1) Tenta formato completo em uma linha.
+        m_full = full_line_pattern.search(line)
+        if m_full:
+            rows.append(
+                {
+                    "DATA": m_full.group("data"),
+                    "HORA": m_full.group("hora"),
+                    "ORIG": m_full.group("orig") or "",
+                    "COMANDA": m_full.group("comanda") or "",
+                    "PRODUTO": m_full.group("produto").strip(),
+                    "QTDE": _normalize_money_text(m_full.group("qtde")),
+                    "VALOR": _normalize_money_text(m_full.group("valor")),
+                    "TOTAL": _normalize_money_text(m_full.group("total")),
+                }
+            )
+            i += 1
+            continue
+
+        # 1.5) Linha de total (ex.: TOTAL DIARIA ...).
+        m_total = total_line_pattern.search(line)
+        if m_total:
+            rows.append(
+                {
+                    "DATA": "",
+                    "HORA": "",
+                    "ORIG": "",
+                    "COMANDA": "",
+                    "PRODUTO": m_total.group("label").strip(),
+                    "QTDE": _normalize_money_text(m_total.group("qtde")),
+                    "VALOR": "",
+                    "TOTAL": _normalize_money_text(m_total.group("total")),
+                }
+            )
+            i += 1
+            continue
+
+        # 2) Tenta formato quebrado em 2-4 linhas (cabeçalho -> produto -> valores -> total).
+        m_head = head_pattern.search(line)
+        if m_head:
+            produto = (m_head.group("produto") or "").strip()
+            cursor = i + 1
+            consumed = 1
+
+            # Em muitos OCRs, a linha de produto vem separada da linha com data/hora/orig.
+            if (not produto) and cursor < len(lines):
+                candidate = lines[cursor]
+                if (
+                    not head_pattern.search(candidate)
+                    and not money_pattern.search(candidate)
+                    and not total_only_pattern.search(candidate)
+                    and "DATA HORA ORIG COMANDA PRODUTO" not in candidate.upper()
+                ):
+                    produto = candidate.strip()
+                    cursor += 1
+                    consumed += 1
+
+            qtde = valor = total = ""
+            if cursor < len(lines):
+                m_money = money_pattern.search(lines[cursor])
+                if m_money:
+                    qtde = _normalize_money_text(m_money.group("qtde"))
+                    valor = _normalize_money_text(m_money.group("valor"))
+                    total = _normalize_money_text(m_money.group("total"))
+                    cursor += 1
+                    consumed += 1
+                    # Se total não veio na mesma linha, tenta próxima linha "R$ xx,xx".
+                    if (not total) and cursor < len(lines):
+                        m_total_only = total_only_pattern.search(lines[cursor])
+                        if m_total_only:
+                            total = _normalize_money_text(m_total_only.group("total"))
+                            consumed += 1
+
+            # Ignora cabeçalhos/linhas inválidas.
+            if produto and not produto.upper().startswith("TOTAL ") and (valor or total):
+                rows.append(
+                    {
+                        "DATA": m_head.group("data"),
+                        "HORA": m_head.group("hora"),
+                        "ORIG": m_head.group("orig") or "",
+                        "COMANDA": m_head.group("comanda") or "",
+                        "PRODUTO": produto,
+                        "QTDE": qtde,
+                        "VALOR": valor,
+                        "TOTAL": total,
+                    }
+                )
+                i += consumed
+                continue
+
+        i += 1
+
+    if rows:
+        return pd.DataFrame(rows)
+
+    # 3) Fallback mais tolerante: OCR pode quebrar campos em blocos irregulares.
+    # Ex.: linha com DATA/HORA/PRODUTO e outra linha com QTDE/VALOR/TOTAL.
+    head_loose_pattern = re.compile(
+        r"^(?P<data>\d{2}/\d{2}/\d{4})[:\s]+(?P<hora>\d{2}:\d{2})\s*(?P<rest>.*)$",
+        flags=re.IGNORECASE,
+    )
+    money_loose_pattern = re.compile(
+        r"(?P<qtde>\d+[,\.\s]?\d{3}).*?(?P<valor>\d{1,3}(?:[\.\s]\d{3})*[,\.\s]\d{1,2})(?:.*?(?P<total>\d{1,3}(?:[\.\s]\d{3})*[,\.\s]\d{1,2}))?",
+        flags=re.IGNORECASE,
+    )
+    total_only_loose_pattern = re.compile(r"^\s*R\$\s*(?P<total>\d{1,3}(?:[\.\s]\d{3})*[,\.\s]\d{1,2})\s*$", flags=re.IGNORECASE)
+
+    i = 0
+    while i < len(lines):
+        m_head = head_loose_pattern.search(lines[i])
+        if not m_head:
+            i += 1
+            continue
+
+        data = m_head.group("data")
+        hora = m_head.group("hora")
+        rest = (m_head.group("rest") or "").strip()
+
+        orig = ""
+        comanda = ""
+        produto = ""
+
+        # Tenta capturar ORIG/COMANDA no começo do "rest".
+        m_ids = re.match(r"^(?P<orig>\d+)(?:\s+(?P<comanda>\d+))?\s*(?P<produto>.*)$", rest)
+        if m_ids:
+            orig = (m_ids.group("orig") or "").strip()
+            comanda = (m_ids.group("comanda") or "").strip()
+            produto = (m_ids.group("produto") or "").strip()
+        else:
+            produto = rest
+
+        # Busca linha de valores no bloco atual + próximas 1..4 linhas.
+        qtde = valor = total = ""
+        for j in range(i, min(i + 5, len(lines))):
+            mm = money_loose_pattern.search(lines[j])
+            if mm:
+                qtde = _normalize_money_text(mm.group("qtde"))
+                valor = _normalize_money_text(mm.group("valor"))
+                total = _normalize_money_text(mm.group("total"))
+                i = j  # avança cursor até linha de valores
+                if (not total) and j + 1 < len(lines):
+                    mt = total_only_loose_pattern.search(lines[j + 1])
+                    if mt:
+                        total = _normalize_money_text(mt.group("total"))
+                        i = j + 1
+                break
+
+        if produto and (valor or total):
+            produto_up = produto.upper()
+            if not produto_up.startswith("TOTAL "):
+                rows.append(
+                    {
+                        "DATA": data,
+                        "HORA": hora,
+                        "ORIG": orig,
+                        "COMANDA": comanda,
+                        "PRODUTO": produto,
+                        "QTDE": qtde,
+                        "VALOR": valor,
+                        "TOTAL": total,
+                    }
+                )
+        i += 1
+
+    return pd.DataFrame(rows)
+
+
+def _extract_hotel_statement_rows(ocr_text):
+    """Parser dedicado para layout 'Nota de Hospedagem' (blocos de 3-4 linhas)."""
+    text = str(ocr_text or "")
+    if not text.strip():
+        return pd.DataFrame()
+
+    def _normalize_money_text(v):
+        s = str(v or "").replace("\t", "").replace(" ", "")
+        if not s:
+            return ""
+        s = s.replace(".", ",")
+        if "," not in s and s.isdigit():
+            return f"{s},00"
+        if "," in s:
+            left, right = s.split(",", 1)
+            if len(right) == 1:
+                right = right + "0"
+            elif len(right) > 2:
+                right = right[:2]
+            return f"{left},{right}"
+        return s
+
+    lines = [" ".join(raw.strip().split()) for raw in text.splitlines() if raw and raw.strip()]
+    if not lines:
+        return pd.DataFrame()
+
+    head_pattern = re.compile(
+        r"^(?P<data>\d{2}/\d{2}/\d{4})[:\s]+"
+        r"(?P<hora>\d{2}:\d{2})\s+"
+        r"(?P<orig>[A-Z]?\d+)"
+        r"(?:\s+(?P<comanda>[A-Z]?\d+))?"
+        r"(?:\s+(?P<produto_inline>.+))?\s*$",
+        flags=re.IGNORECASE,
+    )
+    # Alguns blocos (ex.: restaurante) vêm sem ORIG/COMANDA.
+    head_pattern_no_orig = re.compile(
+        r"^(?P<data>\d{2}/\d{2}/\d{4})[:\s]+"
+        r"(?P<hora>\d{2}:\d{2})"
+        r"(?:\s+(?P<produto_inline>.+))?\s*$",
+        flags=re.IGNORECASE,
+    )
+    qty_val_pattern = re.compile(
+        r"^(?P<qtde>\d+[,\.\s]?\d{3})\s+R\$\s*(?P<valor>[0-9\.,\s]+)\s*$",
+        flags=re.IGNORECASE,
+    )
+    qty_only_pattern = re.compile(r"^(?P<qtde>\d+[,\.\s]?\d{3})\s*$", flags=re.IGNORECASE)
+    money_only_pattern = re.compile(r"^R\$\s*(?P<money>[0-9\.,\s]+)\s*$", flags=re.IGNORECASE)
+    money_amount_only_pattern = re.compile(r"^(?P<money>[0-9\.,\s]+)\s*$", flags=re.IGNORECASE)
+    money_symbol_only_pattern = re.compile(r"^R\$\s*$", flags=re.IGNORECASE)
+    total_only_pattern = re.compile(r"^R\$\s*(?P<total>[0-9\.,\s]+)\s*$", flags=re.IGNORECASE)
+    total_label_pattern = re.compile(r"^(?P<label>TOTAL\s+[A-ZÁÀÃÂÉÊÍÓÔÕÚÇ\s]+)$", flags=re.IGNORECASE)
+
+    rows = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        line_up = line.upper()
+
+        # Ignora cabeçalho da tabela.
+        if "DATA HORA ORIG COMANDA PRODUTO" in line_up or line_up in {"QTDE", "VALOR", "TOTAL"}:
+            i += 1
+            continue
+
+        # Bloco TOTAL: ignora (não deve entrar como PRODUTO).
+        if total_label_pattern.match(line):
+            i += 1
+            continue
+
+        # Bloco item: data/hora/orig(+comanda) [produto inline opcional]
+        # -> produto (se necessário) -> qtde+valor -> total
+        m_head = head_pattern.match(line)
+        head_has_orig = True
+        if not m_head:
+            m_head = head_pattern_no_orig.match(line)
+            head_has_orig = False
+        if m_head and i + 2 < len(lines):
+            produto_inline = (m_head.group("produto_inline") or "").strip()
+            consumed = 1
+            if produto_inline:
+                produto = produto_inline
+                qv_idx = i + 1
+            else:
+                produto = lines[i + 1].strip()
+                qv_idx = i + 2
+                consumed = 2
+
+            # Se "produto" veio só com código numérico, tenta a próxima linha textual.
+            if re.fullmatch(r"\d+", produto or "") and qv_idx < len(lines):
+                alt_prod_idx = qv_idx
+                if alt_prod_idx < len(lines):
+                    alt_prod = lines[alt_prod_idx].strip()
+                    if alt_prod and not re.fullmatch(r"[\d\.,:]+", alt_prod):
+                        produto = alt_prod
+                        qv_idx = min(alt_prod_idx + 1, len(lines) - 1)
+                        consumed += 1
+
+            qtde = valor = total = ""
+            # Caso A: qtde e valor na mesma linha
+            m_qv = qty_val_pattern.match(lines[qv_idx]) if qv_idx < len(lines) else None
+            if m_qv:
+                qtde = _normalize_money_text(m_qv.group("qtde"))
+                valor = _normalize_money_text(m_qv.group("valor"))
+                if qv_idx + 1 < len(lines):
+                    m_tot = total_only_pattern.match(lines[qv_idx + 1])
+                    if m_tot:
+                        total = _normalize_money_text(m_tot.group("total"))
+                        consumed += 2
+                    else:
+                        # OCR pode vir só com número do total (sem "R$").
+                        m_tot_amount = money_amount_only_pattern.match(lines[qv_idx + 1])
+                        if m_tot_amount:
+                            total = _normalize_money_text(m_tot_amount.group("money"))
+                            consumed += 2
+                        else:
+                            total = valor
+                            consumed += 1
+                else:
+                    total = valor
+                    consumed += 1
+            else:
+                # Caso B: qtde em uma linha e valor/total em linhas seguintes
+                m_q = qty_only_pattern.match(lines[qv_idx]) if qv_idx < len(lines) else None
+                if m_q:
+                    qtde = _normalize_money_text(m_q.group("qtde"))
+                    next_idx = qv_idx + 1
+
+                    # Valor pode vir em: "R$ 55,00" | "R$" + "55,00" | "55,00"
+                    if next_idx < len(lines):
+                        m_val = money_only_pattern.match(lines[next_idx])
+                        if m_val:
+                            valor = _normalize_money_text(m_val.group("money"))
+                            next_idx += 1
+                        elif money_symbol_only_pattern.match(lines[next_idx]) and next_idx + 1 < len(lines):
+                            m_val2 = money_amount_only_pattern.match(lines[next_idx + 1])
+                            if m_val2:
+                                valor = _normalize_money_text(m_val2.group("money"))
+                                next_idx += 2
+                        else:
+                            m_val3 = money_amount_only_pattern.match(lines[next_idx])
+                            if m_val3:
+                                valor = _normalize_money_text(m_val3.group("money"))
+                                next_idx += 1
+
+                    # Total pode vir em: "R$ 55,00" | "55,00"
+                    if next_idx < len(lines):
+                        m_tot = total_only_pattern.match(lines[next_idx])
+                        if m_tot:
+                            total = _normalize_money_text(m_tot.group("total"))
+                            next_idx += 1
+                        else:
+                            m_tot2 = money_amount_only_pattern.match(lines[next_idx])
+                            if m_tot2:
+                                total = _normalize_money_text(m_tot2.group("money"))
+                                next_idx += 1
+
+                    if not total:
+                        total = valor
+
+                    consumed = max(consumed, next_idx - i)
+
+            if valor or total:
+                produto_up = str(produto or "").upper().strip()
+                is_origin_like_code = bool(re.fullmatch(r"[A-Z]{0,3}\d{4,}", produto_up))
+                next_is_total_label = False
+                if i + consumed < len(lines):
+                    next_is_total_label = bool(total_label_pattern.match(lines[i + consumed]))
+
+                # Se a próxima linha é TOTAL e qtde não é unitária, normalmente é subtotal do bloco.
+                qtde_is_unitary = str(qtde or "").replace(" ", "") in {"1,000", "1.000", "1,00", "1.00"}
+                is_subtotal_like = next_is_total_label and (not qtde_is_unitary)
+
+                if produto_up and (not produto_up.startswith("TOTAL ")) and (not is_origin_like_code) and (not is_subtotal_like):
+                    rows.append(
+                        {
+                            "DATA": m_head.group("data"),
+                            "PRODUTO": produto,
+                            "VALOR": valor,
+                            "TOTAL": total,
+                        }
+                    )
+                    i += consumed
+                    continue
+
+        i += 1
+
+    return pd.DataFrame(rows)
+
+
+def _extract_struct_rows_from_record(record):
+    """Monta linhas estruturadas para a aba Estrutura_Nota."""
+    text = record.get("_ocr_text", "")
+
+    # 1) Parser dedicado para Nota de Hospedagem (mais fiel ao layout).
+    df_hotel = _extract_hotel_statement_rows(text)
+    # 2) Parser genérico (complementa linhas que o dedicado pode perder).
+    df_generic = _extract_ocr_table_rows(text)
+
+    frames = []
+    if not df_hotel.empty:
+        frames.append(df_hotel)
+    if not df_generic.empty:
+        frames.append(df_generic)
+    if frames:
+        merged = pd.concat(frames, ignore_index=True)
+        # Não deduplicar aqui: sem HORA, itens legítimos repetidos podem sumir.
+        return _sanitize_struct_rows_df(merged)
+
+    # Fallback: quando não há OCR completo, tenta montar lista mínima com produtos.
+    raw_itens = record.get("itens")
+    itens_list = []
+    if isinstance(raw_itens, list):
+        itens_list = [str(x).strip() for x in raw_itens if str(x).strip()]
+    elif isinstance(raw_itens, str) and raw_itens.strip():
+        try:
+            parsed = json.loads(raw_itens)
+            if isinstance(parsed, list):
+                itens_list = [str(x).strip() for x in parsed if str(x).strip()]
+        except Exception:
+            itens_list = [x.strip() for x in raw_itens.split(";") if x.strip()]
+    # Se itens vierem como blocos multiline (data/produto/valor), tenta parsear.
+    if itens_list:
+        joined = "\n".join(itens_list)
+        # Também combina os dois parsers no fallback de itens.
+        if joined.strip():
+            frames_items = [df for df in (_extract_hotel_statement_rows(joined), _extract_ocr_table_rows(joined)) if not df.empty]
+            df_from_items = pd.concat(frames_items, ignore_index=True) if frames_items else pd.DataFrame()
+        else:
+            df_from_items = pd.DataFrame()
+        if not df_from_items.empty:
+            return _sanitize_struct_rows_df(df_from_items)
+    if not itens_list:
+        return pd.DataFrame()
+    return _sanitize_struct_rows_df(pd.DataFrame(
+        [{"DATA": "", "PRODUTO": it, "VALOR": "", "TOTAL": ""} for it in itens_list]
+    ))
+
+
+def _sanitize_struct_rows_df(df):
+    """Garante saída final somente com DATA, PRODUTO, VALOR, TOTAL e sem linhas vazias."""
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["DATA", "PRODUTO", "VALOR", "TOTAL"])
+    out = df.copy()
+
+    # Preenche produto quando parser deixou em branco.
+    if "PRODUTO" not in out.columns:
+        out["PRODUTO"] = ""
+    for alt_col in ("COMANDA", "ORIG", "HORA"):
+        if alt_col in out.columns:
+            alt = out[alt_col].astype(str).str.strip()
+            prod = out["PRODUTO"].astype(str).str.strip()
+            # Só usa fallback se parecer texto de item (não só dígitos/horário).
+            is_text_like = ~alt.str.fullmatch(r"[\d:.,\s]+")
+            use_mask = prod.eq("") & alt.ne("") & is_text_like
+            out.loc[use_mask, "PRODUTO"] = alt[use_mask]
+
+    # Mantém apenas as colunas desejadas.
+    for col in ("DATA", "VALOR", "TOTAL"):
+        if col not in out.columns:
+            out[col] = ""
+    out = out[["DATA", "PRODUTO", "VALOR", "TOTAL"]]
+
+    # Remove linhas sem informação útil.
+    keep = (
+        out["PRODUTO"].astype(str).str.strip().ne("")
+        | out["VALOR"].astype(str).str.strip().ne("")
+        | out["TOTAL"].astype(str).str.strip().ne("")
+    )
+    out = out[keep].copy()
+
+    # Descarta linhas em que "produto" parece código (numérico ou alfanumérico tipo E000277).
+    prod_clean = out["PRODUTO"].astype(str).str.strip().str.upper()
+    is_numeric_code = prod_clean.str.fullmatch(r"\d+")
+    is_alnum_code = prod_clean.str.fullmatch(r"[A-Z]{0,3}\d{4,}")
+    out = out[~(is_numeric_code | is_alnum_code)]
+
+    # Não deduplica: sem HORA/COMANDA, repetições podem ser itens válidos.
+    return out.reset_index(drop=True)
+
+
+def _build_csv_for_record(record):
+    """Gera CSV individual; prioriza estrutura extraída do OCR."""
+    def _is_good_struct_df(df):
+        if df is None or df.empty:
+            return False
+        needed = {"PRODUTO", "VALOR", "TOTAL"}
+        if not needed.issubset(set(df.columns)):
+            return False
+        prod_ok = df["PRODUTO"].astype(str).str.strip().ne("").sum()
+        money_ok = (
+            df["VALOR"].astype(str).str.strip().ne("").sum()
+            + df["TOTAL"].astype(str).str.strip().ne("").sum()
+        )
+        # Só aceita estrutura quando há produtos + valores de fato.
+        return prod_ok > 0 and money_ok > 0
+
+    df = _extract_struct_rows_from_record(record)
+
+    # Se cache vier ruim (ex.: só PRODUTO), reparseia do OCR em tempo real.
+    if not _is_good_struct_df(df):
+        reparsed = _extract_ocr_table_rows(record.get("_ocr_text", ""))
+        if _is_good_struct_df(reparsed):
+            df = reparsed
+
+    if _is_good_struct_df(df):
+        return df.to_csv(index=False, sep=";", encoding="utf-8")
+
+    # Evita baixar CSV "quebrado" com colunas vazias; cai no resumo.
+    return _build_full_csv([record])
 
 
 def _excel_export_filename(results=None):
@@ -874,7 +1472,7 @@ def _render_processed_exports(records, key_prefix="processed"):
     for i, rec in enumerate(records):
         original_name = str(rec.get("discriminacao", "") or f"nota_{i+1}").strip()
         base = Path(original_name).stem or f"nota_{i+1}"
-        one_csv = _build_full_csv([rec])
+        one_csv = _build_csv_for_record(rec)
         one_xlsx = _build_excel_despesas_refeicoes([rec])
         one_txt = (rec.get("_ocr_text") or "").strip()
         st.caption(f"📄 **{original_name}**")
@@ -911,7 +1509,7 @@ def _render_processed_exports(records, key_prefix="processed"):
 
 
 def _reclassify_processed_results():
-    """Reclassifica rubrica dos registros já salvos em sessão/estado."""
+    """Reclassifica rubrica e atualiza estrutura Excel dos registros salvos."""
     try:
         import nf_ocr
     except Exception as e:
@@ -920,6 +1518,7 @@ def _reclassify_processed_results():
     if not results:
         return 0, None
     changed = 0
+    excel_updated = 0
     updated = []
     for rec in results:
         before = str(rec.get("rubrica") or "").strip().lower()
@@ -948,10 +1547,14 @@ def _reclassify_processed_results():
         after = str(new_rec.get("rubrica") or "").strip().lower()
         if after != before:
             changed += 1
+        struct_df = _extract_struct_rows_from_record(new_rec)
+        if not struct_df.empty:
+            new_rec["_excel_struct_rows"] = struct_df.to_dict(orient="records")
+            excel_updated += 1
         updated.append(new_rec)
     st.session_state.results = updated
     _save_state()
-    return changed, None
+    return changed, excel_updated, None
 
 
 def page_inicio():
@@ -1250,11 +1853,11 @@ def page_processados():
         st.info("Ainda não há arquivos processados para listar.")
         return
     if st.button("🔄 Atualizar rubricas dos processados", use_container_width=True, key="btn_reclass_processados"):
-        changed, err = _reclassify_processed_results()
+        changed, excel_updated, err = _reclassify_processed_results()
         if err:
             st.error(err)
-        elif changed > 0:
-            st.success(f"Rubrica atualizada em {changed} registro(s).")
+        elif changed > 0 or excel_updated > 0:
+            st.success(f"Rubrica atualizada em {changed} registro(s) e estrutura Excel atualizada em {excel_updated} registro(s).")
         else:
             st.info("Nenhuma rubrica precisou ser alterada.")
         results = st.session_state.get("results", [])
