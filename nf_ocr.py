@@ -27,7 +27,7 @@ LEGENDA_SCORE_REVISAO = "score_revisao: ok=completo (data, nome, valor, moeda); 
 
 # Rubricas para classificação (prestação de contas)
 RUBRICAS = {
-    "viagem": "Hotel, Uber, táxi, ônibus, passagem aérea",
+    "viagem": "Hotel, hospedagem, diária, Uber, táxi, ônibus, passagem aérea",
     "participacao_congresso": "Inscrição em congresso (nacional ou internacional)",
     "material_consumo": "Material de consumo",
     "material_permanente": "Material permanente (ex.: furadeira, equipamentos)",
@@ -81,6 +81,10 @@ RUBRICAS (escolha UMA que melhor se encaixe):
 - material_consumo: compra de PRODUTOS/MATERIAIS (kit, ferro de solda, sensor, papel, consumíveis, componentes, etc.) — use para itens físicos consumíveis ou pequenos equipamentos de consumo
 - material_permanente: material permanente, equipamentos (furadeira, máquinas, bens duráveis)
 - servico_terceiros: SERVIÇO prestado por terceiro (mão de obra, execução de serviço, manutenção contratada, clip gage feito fora) — NÃO use para compra de produtos/materiais; só quando a despesa é pelo serviço em si
+
+REGRA DE PRIORIDADE MUITO IMPORTANTE:
+- Se houver indícios de hospedagem (ex.: HOTEL, HOSPEDAGEM, DIARIA/DIÁRIA, CHECK-IN, CHECK-OUT, APTO, HÓSPEDE, TOTAL DIARIA), classifique como **viagem**.
+- Nesses casos de hotel/hospedagem, NÃO usar servico_terceiros.
 
 Se um campo não for encontrado, use null. valor_total: só o número. moeda: BRL se for real brasileiro quando não estiver explícito. score_revisao: o mais importante é data + nome_comprador + valor + moeda; ok só se os quatro estiverem presentes e coerentes.
 {nomes_pesquisadores}
@@ -226,6 +230,44 @@ def llm_extrair(texto, api_key=None, nomes_pesquisadores=None):
     ) from last_err
 
 
+def _enforce_rubrica_rules(dados, texto_ocr):
+    """Corrige rubrica em casos bem evidentes para reduzir erro da LLM."""
+    if not isinstance(dados, dict):
+        return dados
+    text = (texto_ocr or "").lower()
+    itens = dados.get("itens")
+    if isinstance(itens, list):
+        text += " " + " ".join(str(x).lower() for x in itens)
+    elif isinstance(itens, str):
+        text += " " + itens.lower()
+    # Também considera descrição curta da nota.
+    text += " " + str(dados.get("discriminacao") or "").lower()
+
+    # Normaliza acentos para melhorar match (diária/diaria, hóspede/hospede).
+    text_norm = "".join(
+        ch for ch in unicodedata.normalize("NFD", text) if unicodedata.category(ch) != "Mn"
+    )
+    rub = str(dados.get("rubrica") or "").strip().lower().replace(" ", "_")
+
+    hospedagem_signals = [
+        "hospedagem", "hotel", "diaria", "diária", "check-in", "check-out",
+        "hospede", "hóspede", "total diaria", "total diária", "apto",
+    ]
+    if any(s in text_norm for s in hospedagem_signals):
+        dados["rubrica"] = "viagem"
+        return dados
+
+    return dados
+
+
+def reclassificar_rubrica_processada(dados, texto_ocr=""):
+    """API pública para reclassificar rubrica em registros já processados."""
+    if not isinstance(dados, dict):
+        return dados
+    clone = dict(dados)
+    return _enforce_rubrica_rules(clone, texto_ocr)
+
+
 # --- 3) Google Sheets: append linha ---
 def _limpar_nome_comprador(s):
     """Remove só CPF/CNPJ do início (padrão 11 ou 14 dígitos). Não corta nome; se não achar doc no início, devolve o texto original."""
@@ -246,6 +288,27 @@ def _limpar_nome_comprador(s):
         if len(rest) >= 2 and rest[0].isalpha():
             return rest
     return s
+
+
+def _resolver_nome_mascarado(nome, lista_pesquisadores):
+    """Se o nome vier com asteriscos (ex: Bern***) ou for um prefixo curto, tenta
+    identificar com um pesquisador cadastrado (ex: Bernardo). Retorna o nome completo
+    quando houver uma única correspondência; caso contrário devolve o nome original."""
+    if not nome or not isinstance(nome, str):
+        return nome or ""
+    nome = nome.strip()
+    if not lista_pesquisadores:
+        return nome
+    # Extrai o prefixo antes de asteriscos (ex: "Bern***" -> "Bern")
+    prefix = re.sub(r"\*.*", "", nome).strip() or nome
+    prefix = prefix.strip()
+    if len(prefix) < 2:
+        return nome
+    lista = [str(p).strip() for p in lista_pesquisadores if p and str(p).strip()]
+    matches = [p for p in lista if p.lower().startswith(prefix.lower())]
+    if len(matches) == 1:
+        return matches[0]
+    return nome
 
 
 def _dados_para_linha(dados):
@@ -355,43 +418,48 @@ def sheet_append(dados, sheet_id=None, creds_path=None):
 
 
 # --- Pipeline e CLI ---
-def processar_arquivo(path, model, api_key, sheet_id, creds_path, csv_path=None, dry_run=False, nomes_pesquisadores=None):
-    """Retorna (ok, dados): (True, dados) quando nova linha foi adicionada; (True, None) quando já existia (não duplicou); (False, None) em erro."""
+def processar_arquivo(path, model, api_key, sheet_id, creds_path, csv_path=None, dry_run=False, nomes_pesquisadores=None, return_text=False):
+    """Retorna (ok, dados) por padrão.
+    Se return_text=True, retorna (ok, dados, texto_ocr)."""
     path = Path(path)
     print(f"[OCR] {path.name}...")
     texto = ocr_file(path, model)
     if not texto.strip():
         print(f"  -> Sem texto extraído. Pulando.")
-        return (False, None)
+        return (False, None, texto) if return_text else (False, None)
     print(f"[LLM] Estruturando...")
     dados = llm_extrair(texto, api_key, nomes_pesquisadores=nomes_pesquisadores)
+    dados = _enforce_rubrica_rules(dados, texto)
     dados["discriminacao"] = path.name
     dados["link_drive"] = dados.get("link_drive") or ""
+    # Resolve nome com asteriscos (ex: Bern***) usando a lista de pesquisadores (ex: Bernardo)
+    nome_limpo = _limpar_nome_comprador(dados.get("nome_comprador") or "")
+    dados["nome_comprador"] = _resolver_nome_mascarado(nome_limpo, nomes_pesquisadores or [])
     if dry_run:
         print(json.dumps(dados, indent=2, ensure_ascii=False))
-        return (True, dados)
+        return (True, dados, texto) if return_text else (True, dados)
     if csv_path:
         if csv_append(dados, csv_path):
             print(f"  -> CSV atualizado: {csv_path} (NF {dados.get('numero_nf')})")
-            return (True, dados)
+            return (True, dados, texto) if return_text else (True, dados)
         print(f"  -> Já existe no CSV (discriminacao={path.name}). Pulando.")
-        return (True, None)
+        return (True, None, texto) if return_text else (True, None)
     if sheet_id and creds_path:
         try:
             sheet_append(dados, sheet_id, creds_path)
             print(f"  -> Google Sheets atualizado. NF {dados.get('numero_nf')}.")
-            return (True, dados)
+            return (True, dados, texto) if return_text else (True, dados)
         except Exception as e:
             print(f"  -> Google Sheets falhou ({e}). Use --csv saida.csv para planilha local.")
             if csv_append(dados, "nf_extraidas.csv"):
                 print(f"  -> Gravado em nf_extraidas.csv")
-                return (True, dados)
-            return (True, None)
+                return (True, dados, texto) if return_text else (True, dados)
+            return (True, None, texto) if return_text else (True, None)
     if csv_append(dados, "nf_extraidas.csv"):
         print(f"  -> Gravado em nf_extraidas.csv (NF {dados.get('numero_nf')}).")
-        return (True, dados)
+        return (True, dados, texto) if return_text else (True, dados)
     print(f"  -> Já existe no CSV (discriminacao={path.name}). Pulando.")
-    return (True, None)
+    return (True, None, texto) if return_text else (True, None)
 
 
 def main():

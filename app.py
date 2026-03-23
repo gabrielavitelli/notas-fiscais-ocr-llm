@@ -23,9 +23,11 @@ if _env_path.exists():
         pass  # .env com encoding errado (ex. UTF-16): na nuvem use Secrets; no PC salve .env em UTF-8
 
 import json
+import io
 import tempfile
 import time
 import csv as csv_module
+import unicodedata
 from datetime import datetime
 
 import pandas as pd
@@ -59,8 +61,95 @@ def _load_secrets_to_env():
         pass
 
 
+def _resolve_gcp_project_id_for_secrets():
+    """Projeto onde o Secret Manager procura os segredos (deve ser o mesmo do secret)."""
+    for k in ("GOOGLE_CLOUD_PROJECT", "GCP_PROJECT", "GCLOUD_PROJECT"):
+        v = (os.environ.get(k) or "").strip()
+        if v:
+            return v
+    # Service account JSON traz o project_id — evita erro quando o secret não está em "climaticsystem"
+    cred_path = (os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or "").strip().strip('"')
+    if cred_path:
+        try:
+            p = Path(cred_path)
+            if p.is_file():
+                data = json.loads(p.read_text(encoding="utf-8"))
+                pid = data.get("project_id")
+                if isinstance(pid, str) and pid.strip():
+                    return pid.strip()
+        except Exception:
+            pass
+    return "climaticsystem"
+
+
+def _secret_manager_service_client():
+    """Cria cliente do Secret Manager (import compatível com vários ambientes)."""
+    # 1) Caminho “oficial” do pacote google-cloud-secret-manager
+    try:
+        from google.cloud import secretmanager
+
+        return secretmanager.SecretManagerServiceClient()
+    except ImportError:
+        pass
+    # 2) Import direto (às vezes resolve conflito de namespace google.cloud)
+    try:
+        from google.cloud.secretmanager_v1 import SecretManagerServiceClient
+
+        return SecretManagerServiceClient()
+    except ImportError as e:
+        raise ImportError(
+            "Instale o cliente do Secret Manager no MESMO Python que roda o Streamlit: "
+            "python -m pip install google-cloud-secret-manager"
+        ) from e
+
+
+def _get_secret_from_gcp(secret_id, project=None, version="latest"):
+    """Lê segredo no Google Secret Manager. Retorna string ou None."""
+    try:
+        project_id = project or _resolve_gcp_project_id_for_secrets()
+        client = _secret_manager_service_client()
+        name = f"projects/{project_id}/secrets/{secret_id}/versions/{version}"
+        response = client.access_secret_version(request={"name": name})
+        value = response.payload.data.decode("UTF-8").strip()
+        return value or None
+    except Exception as e:
+        try:
+            os.environ["GCP_SECRET_MANAGER_LAST_ERROR"] = f"{type(e).__name__}: {str(e)[:280]}"
+        except Exception:
+            pass
+        return None
+
+
+def _load_gcp_secret_manager_to_env():
+    """Fallback: carrega GROQ/HF do Google Secret Manager quando env/secrets não vierem preenchidos."""
+    try:
+        os.environ.pop("GCP_SECRET_MANAGER_LAST_ERROR", None)
+        project_id = _resolve_gcp_project_id_for_secrets()
+        try:
+            os.environ["GCP_SECRET_MANAGER_PROJECT_USED"] = project_id
+        except Exception:
+            pass
+        # Ordem tentativa por token para facilitar reaproveitar segredos já existentes no projeto.
+        candidates = {
+            "GROQ_API_KEY": ["GROQ_API_KEY", "groq_api_key", "GROQ-API-KEY", "groq-api-key"],
+            "HF_TOKEN": ["HF_TOKEN", "hf_token", "HUGGINGFACE_TOKEN", "huggingface_token"],
+        }
+        for env_key, secret_ids in candidates.items():
+            if os.environ.get(env_key, "").strip():
+                continue
+            for sid in secret_ids:
+                value = _get_secret_from_gcp(sid, project=project_id)
+                if isinstance(value, str) and value.strip():
+                    os.environ[env_key] = value.strip()
+                    break
+    except Exception:
+        pass
+
+
 VERSION = "1.0.0"
 LAST_UPDATE = "2025-03"
+APP_LOGIN_USER = "geoinfra"
+APP_LOGIN_PASSWORD = "geoinfra"
 
 # Diretório padrão: CSV, estado e log num só lugar (na nuvem, se read-only, usa temp)
 try:
@@ -113,6 +202,12 @@ STYLE = """
   html, body, [data-testid="stAppViewContainer"] { font-family: 'Inter', sans-serif; background: #F8FAFC; }
   /* Sidebar: fundo claro #F1F5F9 → texto bem escuro para contraste */
   section[data-testid="stSidebar"] { background: #F1F5F9 !important; }
+  section[data-testid="stSidebar"] > div:first-child {
+    width: 360px !important;
+    min-width: 360px !important;
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
   section[data-testid="stSidebar"] .stMarkdown,
   section[data-testid="stSidebar"] .stMarkdown p,
   section[data-testid="stSidebar"] .stMarkdown h1,
@@ -211,11 +306,68 @@ STYLE = """
   .nf-card-panel h4 { margin: 0 0 0.75rem 0; font-size: 1rem; color: #000000; }
   .nf-upload-hero { border: 2px dashed #CBD5E1; border-radius: 16px; padding: 2.5rem; text-align: center; background: #F8FAFC; color: #475569; margin: 0.75rem 0; }
   .nf-upload-hero .cloud { font-size: 2.5rem; margin-bottom: 0.5rem; }
-  .nf-sidebar-footer { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #E2E8F0; font-size: 0.8rem; color: #000000; }
+  .nf-sidebar-footer {
+    margin-top: 2rem;
+    padding: 0.85rem;
+    border: 1px solid #E2E8F0;
+    border-radius: 10px;
+    background: #FFFFFF;
+    font-size: 0.82rem;
+    color: #0F172A;
+    line-height: 1.45;
+  }
   .nf-header-right { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
   /* Menu lateral: mais espaço e destaque no item ativo */
-  section[data-testid="stSidebar"] [data-testid="stRadio"] > label { padding: 0.5rem 0.75rem !important; border-radius: 8px !important; }
-  section[data-testid="stSidebar"] [data-testid="stRadio"] > label:hover { background: rgba(37, 99, 235, 0.08) !important; }
+  section[data-testid="stSidebar"] hr {
+    margin: 0.7rem 0 1rem 0 !important;
+    border-color: #CBD5E1 !important;
+  }
+  .nf-nav-title {
+    margin: 0.15rem 0 0.35rem 0;
+    font-size: 1.45rem;
+    font-weight: 800;
+    letter-spacing: 0.2px;
+    color: #0F172A !important;
+  }
+  section[data-testid="stSidebar"] [data-testid="stRadio"] { gap: 0.75rem !important; }
+  section[data-testid="stSidebar"] [data-testid="stRadio"] > label {
+    margin-bottom: 0.5rem !important;
+    padding: 1rem 1rem !important;
+    border-radius: 14px !important;
+    border: 1px solid #CBD5E1 !important;
+    background: #FFFFFF !important;
+    transition: all .18s ease !important;
+    font-weight: 700 !important;
+    font-size: 1.02rem !important;
+    line-height: 1.35 !important;
+  }
+  section[data-testid="stSidebar"] [data-testid="stRadio"] > label:hover {
+    background: rgba(37, 99, 235, 0.08) !important;
+    border-color: #93C5FD !important;
+  }
+  .nf-nav-helper {
+    margin: 0.25rem 0 1rem 0;
+    color: #475569 !important;
+    font-size: 0.92rem;
+  }
+  .nf-result-card {
+    border: 1px solid #E2E8F0;
+    border-radius: 12px;
+    padding: 0.8rem 0.9rem;
+    margin-bottom: 0.6rem;
+    background: #0F172A;
+  }
+  .nf-result-card-title {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: #FFFFFF;
+    margin-bottom: 0.25rem;
+  }
+  .nf-result-card-sub {
+    font-size: 0.78rem;
+    color: #E2E8F0;
+    margin-bottom: 0.5rem;
+  }
   /* Resultados: texto preto em fundo branco */
   [data-testid="stAppViewContainer"] div[data-testid="stVerticalBlock"] > div .stMarkdown,
   [data-testid="stAppViewContainer"] div[data-testid="stVerticalBlock"] .stCaption,
@@ -360,6 +512,8 @@ def init_session_state():
         st.session_state.log_duvidas_erros = []
     if "ultima_execucao" not in st.session_state:
         st.session_state.ultima_execucao = ""
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
 
 
 @st.cache_resource
@@ -397,12 +551,35 @@ def render_header():
     """, unsafe_allow_html=True)
 
 
+def require_login():
+    if st.session_state.get("authenticated", False):
+        return True
+    st.markdown("## 🔐 Login")
+    st.caption("Acesso restrito ao sistema de notas fiscais.")
+    with st.form("login_form_nf"):
+        user = st.text_input("Usuário")
+        password = st.text_input("Senha", type="password")
+        submitted = st.form_submit_button("Entrar", use_container_width=True)
+    if submitted:
+        if user == APP_LOGIN_USER and password == APP_LOGIN_PASSWORD:
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("Usuário ou senha inválidos.")
+    return False
+
+
 def render_sidebar():
     with st.sidebar:
-        st.markdown("### Navegação")
+        if st.button("🚪 Sair", use_container_width=True, key="btn_logout"):
+            st.session_state.authenticated = False
+            st.rerun()
         st.markdown("---")
-        pages = ["☁️ Upload", "⚠️ Revisar", "⚙️ Configurações", "ℹ️ Sobre"]
-        page_to_index = {"Início": 0, "Revisar": 1, "Configurações": 2, "Sobre": 3}
+        st.markdown('<div class="nf-nav-title">Navegação</div>', unsafe_allow_html=True)
+        st.markdown('<div class="nf-nav-helper">Escolha uma etapa do fluxo abaixo.</div>', unsafe_allow_html=True)
+        st.markdown("---")
+        pages = ["☁️ Upload", "📂 Processados", "⚠️ Revisar", "⚙️ Configurações", "ℹ️ Sobre"]
+        page_to_index = {"Início": 0, "Processados": 1, "Revisar": 2, "Configurações": 3, "Sobre": 4}
         current = st.session_state.get("page", "Início")
         try:
             idx = min(page_to_index.get(current, 0), len(pages) - 1)
@@ -411,6 +588,8 @@ def render_sidebar():
             page = st.radio("Menu", options=pages, key="sidebar_nav", label_visibility="collapsed")
         if "Upload" in page:
             st.session_state.page = "Início"
+        elif "Processados" in page:
+            st.session_state.page = "Processados"
         elif "Revisar" in page:
             st.session_state.page = "Revisar"
         elif "Configurações" in page:
@@ -418,7 +597,7 @@ def render_sidebar():
         else:
             st.session_state.page = "Sobre"
         st.markdown("---")
-        st.markdown('<div class="nf-sidebar-footer">Extração estruturada com DocTR e IA</div>', unsafe_allow_html=True)
+        st.markdown('<div class="nf-sidebar-footer"><strong>Extração estruturada</strong><br/>com DocTR e IA.</div>', unsafe_allow_html=True)
 
 
 def run_processing(progress_placeholder):
@@ -459,6 +638,7 @@ def run_processing(progress_placeholder):
         return False
     # Garante que Secrets estão em os.environ antes de chamar nf_ocr (mesmo após rerun)
     _load_secrets_to_env()
+    _load_gcp_secret_manager_to_env()
     api_key = os.environ.get("GROQ_API_KEY") or os.environ.get("groq_api_key")
     nomes_pesquisadores = list(st.session_state.get("lista_pesquisadores", []))
     results = list(st.session_state.get("results", []))
@@ -484,15 +664,16 @@ def run_processing(progress_placeholder):
         t0 = time.time()
         try:
             import nf_ocr
-            ok, dados = nf_ocr.processar_arquivo(
+            ok, dados, ocr_text = nf_ocr.processar_arquivo(
                 path, model, api_key, sheet_id=None, creds_path=None,
-                csv_path=str(csv_path), dry_run=False, nomes_pesquisadores=nomes_pesquisadores,
+                csv_path=str(csv_path), dry_run=False, nomes_pesquisadores=nomes_pesquisadores, return_text=True,
             )
             elapsed = time.time() - t0
             if ok and dados is not None:
                 st.session_state.processing[i]["status"] = "Finalizado"
                 rec = nf_ocr.registro_from_dados(dados)
                 rec["_elapsed_sec"] = round(elapsed, 1)
+                rec["_ocr_text"] = (ocr_text or "").strip()
                 results.append(rec)
                 score = (rec.get("score_revisao") or "").strip().lower()
                 if score == "revisar":
@@ -575,6 +756,204 @@ def _build_full_csv(results=None):
     return "\n".join(out)
 
 
+def _build_ocr_txt(results=None):
+    results = results or st.session_state.get("results", [])
+    if not results:
+        return ""
+    blocks = []
+    for i, r in enumerate(results, start=1):
+        file_name = (r.get("discriminacao") or f"arquivo_{i}").strip()
+        ocr_text = (r.get("_ocr_text") or "").strip()
+        if not ocr_text:
+            continue
+        blocks.append(
+            f"[ARQUIVO {i}] {file_name}\n"
+            + "-" * 72
+            + f"\n{ocr_text}\n"
+        )
+    return "\n".join(blocks).strip()
+
+
+def _to_float_br(value):
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    txt = str(value).strip()
+    if not txt:
+        return 0.0
+    txt = txt.replace("R$", "").replace(" ", "")
+    # Trata formatos pt-BR e en-US.
+    if "," in txt and "." in txt:
+        txt = txt.replace(".", "").replace(",", ".")
+    elif "," in txt:
+        txt = txt.replace(",", ".")
+    try:
+        return float(txt)
+    except Exception:
+        return 0.0
+
+
+def _build_excel_despesas_refeicoes(results=None):
+    results = results or st.session_state.get("results", [])
+    if not results:
+        return b""
+    rows = []
+    for r in results:
+        valor = _to_float_br(r.get("valor_total", ""))
+        produto = (r.get("itens", "") or r.get("discriminacao", "") or "").strip()
+        rows.append(
+            {
+                "Data": r.get("data_emissao", ""),
+                "Pesquisador": r.get("nome_comprador", ""),
+                "Empresa": r.get("razao_social_emitente", ""),
+                "CNPJ": r.get("cnpj_emitente", ""),
+                "Descrição": r.get("discriminacao", ""),
+                "Rubrica": r.get("rubrica", ""),
+                "Produto": produto,
+                "Valor total": valor,
+                "Moeda": r.get("moeda", "BRL"),
+            }
+        )
+    df_excel = pd.DataFrame(rows)
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df_excel.to_excel(writer, index=False, sheet_name="Prestacao_Contas")
+    return buffer.getvalue()
+
+
+def _excel_export_filename(results=None):
+    results = results or st.session_state.get("results", [])
+    if not results:
+        return "notas_fiscais.xlsx"
+    originals = []
+    for r in results:
+        nm = str(r.get("discriminacao", "") or "").strip()
+        if nm:
+            originals.append(Path(nm).stem)
+    originals = [o for o in originals if o]
+    if not originals:
+        return "notas_fiscais.xlsx"
+    base = originals[0].strip()
+    if not base:
+        base = "nota_fiscal"
+    if len(originals) == 1:
+        return f"{base}.xlsx"
+    return f"{base}_lote.xlsx"
+
+
+def _csv_export_filename(results=None):
+    results = results or st.session_state.get("results", [])
+    if not results:
+        return "notas_fiscais.csv"
+    originals = []
+    for r in results:
+        nm = str(r.get("discriminacao", "") or "").strip()
+        if nm:
+            originals.append(Path(nm).stem)
+    originals = [o for o in originals if o]
+    if not originals:
+        return "notas_fiscais.csv"
+    base = originals[0].strip() or "nota_fiscal"
+    if len(originals) == 1:
+        return f"{base}.csv"
+    return f"{base}_lote.csv"
+
+
+def _norm_filename_key(name):
+    name = str(name or "").strip().lower()
+    # chave robusta para casar nomes com diferenças de espaços/pontuação
+    return "".join(ch for ch in name if ch.isalnum())
+
+
+def _render_processed_exports(records, key_prefix="processed"):
+    if not records:
+        st.info("Nenhum arquivo processado ainda.")
+        return
+    st.markdown("**⬇️ Exportar por arquivo (individual)**")
+    for i, rec in enumerate(records):
+        original_name = str(rec.get("discriminacao", "") or f"nota_{i+1}").strip()
+        base = Path(original_name).stem or f"nota_{i+1}"
+        one_csv = _build_full_csv([rec])
+        one_xlsx = _build_excel_despesas_refeicoes([rec])
+        one_txt = (rec.get("_ocr_text") or "").strip()
+        st.caption(f"📄 **{original_name}**")
+        col_csv_one, col_xlsx_one, col_txt_one = st.columns(3)
+        with col_csv_one:
+            st.download_button(
+                "CSV",
+                data=one_csv,
+                file_name=f"{base}.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key=f"{key_prefix}_dl_csv_single_{i}",
+            )
+        with col_xlsx_one:
+            if one_xlsx:
+                st.download_button(
+                    "Excel",
+                    data=one_xlsx,
+                    file_name=f"{base}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    key=f"{key_prefix}_dl_xlsx_single_{i}",
+                )
+        with col_txt_one:
+            if one_txt:
+                st.download_button(
+                    "TXT",
+                    data=one_txt,
+                    file_name=f"{base}.txt",
+                    mime="text/plain",
+                    use_container_width=True,
+                    key=f"{key_prefix}_dl_txt_single_{i}",
+                )
+
+
+def _reclassify_processed_results():
+    """Reclassifica rubrica dos registros já salvos em sessão/estado."""
+    try:
+        import nf_ocr
+    except Exception as e:
+        return 0, f"Falha ao importar nf_ocr: {e}"
+    results = list(st.session_state.get("results", []))
+    if not results:
+        return 0, None
+    changed = 0
+    updated = []
+    for rec in results:
+        before = str(rec.get("rubrica") or "").strip().lower()
+        text = str(rec.get("_ocr_text") or "")
+        if hasattr(nf_ocr, "reclassificar_rubrica_processada"):
+            new_rec = nf_ocr.reclassificar_rubrica_processada(rec, text)
+        else:
+            # Fallback para ambientes com cache/stale import do nf_ocr.
+            text_low = (text or "").lower()
+            itens = rec.get("itens")
+            if isinstance(itens, list):
+                text_low += " " + " ".join(str(x).lower() for x in itens)
+            elif isinstance(itens, str):
+                text_low += " " + itens.lower()
+            text_low += " " + str(rec.get("discriminacao") or "").lower()
+            text_norm = "".join(
+                ch for ch in unicodedata.normalize("NFD", text_low) if unicodedata.category(ch) != "Mn"
+            )
+            sinais_hosp = [
+                "hospedagem", "hotel", "diaria", "check-in", "check-out",
+                "hospede", "total diaria", "apto",
+            ]
+            new_rec = dict(rec)
+            if any(s in text_norm for s in sinais_hosp):
+                new_rec["rubrica"] = "viagem"
+        after = str(new_rec.get("rubrica") or "").strip().lower()
+        if after != before:
+            changed += 1
+        updated.append(new_rec)
+    st.session_state.results = updated
+    _save_state()
+    return changed, None
+
+
 def page_inicio():
     metrics = st.session_state.get("metrics", {})
     processing = st.session_state.get("processing", [])
@@ -619,15 +998,30 @@ def page_inicio():
             if valid:
                 clicou = st.button("► Iniciar processamento", type="primary", use_container_width=True)
                 if clicou:
+                    _load_secrets_to_env()
+                    _load_gcp_secret_manager_to_env()
                     groq = os.environ.get("GROQ_API_KEY", "")
                     hf = os.environ.get("HF_TOKEN", "")
                     if not groq and not hf:
+                        gcp_err = (os.environ.get("GCP_SECRET_MANAGER_LAST_ERROR") or "").strip()
+                        gcp_proj = (os.environ.get("GCP_SECRET_MANAGER_PROJECT_USED") or "").strip()
+                        gac = (os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
                         st.error(
-                            "⚠️ **Chave de API não definida.** Uma vez configurada, não precisa definir de novo.\n\n"
-                            "**No seu PC:** crie ou edite o arquivo **.env** na pasta do projeto (copie de **.env.example** e coloque sua chave). "
-                            "O **.env não sobe pro GitHub** (está no .gitignore).\n\n"
-                            "**Na nuvem:** em [share.streamlit.io](https://share.streamlit.io) → seu app → **Settings** → **Secrets** → adicione `GROQ_API_KEY` ou `HF_TOKEN`."
+                            "⚠️ **Chave de API não definida.**\n\n"
+                            "O app tentou carregar automaticamente de: **Streamlit Secrets**, **variáveis de ambiente** e **Google Secret Manager**.\n\n"
+                            "**Google Secret Manager:** o segredo deve se chamar **`GROQ_API_KEY`** no **mesmo projeto** onde está a service account (ou defina `GOOGLE_CLOUD_PROJECT`). "
+                            "A conta precisa da role **Secret Manager Secret Accessor** nesse segredo.\n\n"
+                            "**No seu PC (fallback):** crie/edite **.env** com `GROQ_API_KEY=...` ou `GOOGLE_APPLICATION_CREDENTIALS=C:\\\\caminho\\\\chave.json`.\n"
+                            "**Windows:** depois de `export`/`set`, **feche e abra o terminal** e rode o Streamlit de novo (IDEs às vezes não herdam o env).\n"
+                            "**Na nuvem (fallback):** use **Settings → Secrets**."
                         )
+                        if gcp_proj:
+                            st.caption(f"Projeto GCP usado no Secret Manager: **{gcp_proj}**")
+                        if gac:
+                            _exists = Path(gac).is_file()
+                            st.caption(f"`GOOGLE_APPLICATION_CREDENTIALS` = `{gac}` — arquivo existe: **{_exists}**")
+                        if gcp_err:
+                            st.caption(f"Diagnóstico GCP: {gcp_err}")
                         return
                     if groq:
                         os.environ["GROQ_API_KEY"] = groq
@@ -678,9 +1072,9 @@ def page_inicio():
             st.error("**Erro na LLM (extração com IA)** — veja o detalhe abaixo.")
             if "Invalid API Key" in msg or "invalid_api_key" in msg:
                 st.warning(
-                    "**Chave da Groq inválida (401).** A `GROQ_API_KEY` nos Secrets está incorreta ou mal colada. "
+                    "**Chave da Groq inválida (401).** A `GROQ_API_KEY` está incorreta (em Secret Manager, Secrets do Streamlit ou env). "
                     "**Faça assim:** 1) Abra [console.groq.com/keys](https://console.groq.com/keys) e crie ou copie uma chave (começa com `gsk_`). "
-                    "2) Em **Secrets** do app, use exatamente: `GROQ_API_KEY = \"gsk_...\"` — **sem espaços** antes/depois da chave e **sem aspas a mais**. Cole a chave inteira. "
+                    "2) Atualize o valor de `GROQ_API_KEY` no **Google Secret Manager** (ou em Secrets do app) — **sem espaços** extras e com a chave completa. "
                     "3) Guarde, espere ~1 min e faça **Reboot** do app."
                 )
             elif "Invalid username or password" in msg or ("401" in msg and "huggingface" in msg.lower()):
@@ -731,6 +1125,25 @@ def page_inicio():
                 ja_list = st.session_state.ultimos_ja_incluidos
                 st.warning(f"**Aviso:** Os seguintes arquivos já constavam na planilha e **não foram duplicados**: {', '.join(ja_list)}.")
                 st.session_state.ultimos_ja_incluidos = []
+            current_results = st.session_state.get("results", [])
+            if current_results:
+                result_by_name = {}
+                for rec in current_results:
+                    nm = str(rec.get("discriminacao", "") or "").strip()
+                    if nm:
+                        result_by_name.setdefault(nm, rec)
+                        result_by_name.setdefault(_norm_filename_key(nm), rec)
+                export_records = []
+                for i, item in enumerate(processing):
+                    status_txt = str(item.get("status", "") or "")
+                    if ("Finalizado" not in status_txt) and ("Já incluído" not in status_txt):
+                        continue
+                    original_name = str(item.get("name", "") or "").strip()
+                    rec = result_by_name.get(original_name) or result_by_name.get(_norm_filename_key(original_name))
+                    if not rec:
+                        continue
+                    export_records.append(rec)
+                _render_processed_exports(export_records, key_prefix="upload")
 
         results = st.session_state.get("results", [])
         if results:
@@ -794,8 +1207,7 @@ def page_inicio():
                 },
                 key="results_editor",
             )
-            csv_content = _build_full_csv(results)
-            st.download_button("📥 Exportar CSV", data=csv_content, file_name="notas_fiscais.csv", mime="text/csv", use_container_width=True)
+            st.caption("Os downloads individuais (CSV/Excel/TXT) estão na seção de Processamento.")
 
 
 def page_revisar():
@@ -829,6 +1241,25 @@ def page_revisar():
     )
     csv_revisar = _build_full_csv(revisar)
     st.download_button("📥 Exportar lista para revisão (CSV)", data=csv_revisar, file_name="notas_para_revisar.csv", mime="text/csv", use_container_width=True, key="dl_revisar")
+
+
+def page_processados():
+    st.subheader("📂 Arquivos processados")
+    results = st.session_state.get("results", [])
+    if not results:
+        st.info("Ainda não há arquivos processados para listar.")
+        return
+    if st.button("🔄 Atualizar rubricas dos processados", use_container_width=True, key="btn_reclass_processados"):
+        changed, err = _reclassify_processed_results()
+        if err:
+            st.error(err)
+        elif changed > 0:
+            st.success(f"Rubrica atualizada em {changed} registro(s).")
+        else:
+            st.info("Nenhuma rubrica precisou ser alterada.")
+        results = st.session_state.get("results", [])
+    st.caption(f"{len(results)} registro(s) processado(s) disponível(is) para download individual.")
+    _render_processed_exports(results, key_prefix="page_processados")
 
 
 def page_configuracoes():
@@ -930,15 +1361,20 @@ def main():
     except Exception:
         pass  # set_page_config só pode rodar uma vez
     _load_secrets_to_env()
+    _load_gcp_secret_manager_to_env()
     inject_css()
     _ensure_dados_dir()
     try:
         init_session_state()
+        if not require_login():
+            return
         render_sidebar()
         render_header()
         page = st.session_state.get("page", "Início")
         if page == "Início":
             page_inicio()
+        elif page == "Processados":
+            page_processados()
         elif page == "Revisar":
             page_revisar()
         elif page == "Configurações":
