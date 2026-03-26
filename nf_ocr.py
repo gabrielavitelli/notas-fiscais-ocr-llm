@@ -12,6 +12,7 @@ import re
 import json
 import csv
 import argparse
+import unicodedata
 from pathlib import Path
 
 # Colunas da NF (planilha e CSV)

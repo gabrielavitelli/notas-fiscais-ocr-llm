@@ -70,9 +70,61 @@ python nf_ocr.py nota.pdf --dry-run
 
 ---
 
-## Campos no CSV / planilha
+## Colunas exportadas (CSV e XLSX)
 
-`numero_nf`, `data_emissao`, `nome_comprador`, `cnpj_emitente`, `razao_social_emitente`, `valor_total`, `moeda`, `rubrica`, `discriminacao`, `link_drive`, `score_revisao`, `itens`. A segunda linha da planilha traz a legenda do `score_revisao`.
+### CSV principal (processamento/persistência)
+
+Colunas:
+
+`numero_nf`, `data_emissao`, `nome_comprador`, `cnpj_emitente`, `razao_social_emitente`, `valor_total`, `moeda`, `rubrica`, `discriminacao`, `link_drive`, `score_revisao`, `itens`.
+
+Observação: no CSV persistido pelo `nf_ocr.py`, a segunda linha traz a legenda do `score_revisao`.
+
+### CSV individual (download por arquivo no app)
+
+Quando o parser estruturado da nota encontra itens/valores com qualidade, o CSV individual sai com:
+
+`DATA`, `PRODUTO`, `VALOR`, `TOTAL`.
+
+Se a estrutura detalhada nao for encontrada, o app usa fallback para o CSV resumido (chaves completas do registro).
+
+### CSV da area Revisar
+
+Colunas:
+
+`Empresa`, `CNPJ`, `Data`, `Valor`, `Rubrica`, `Pesquisador`, `Produto`, `Score`, `Arquivo`.
+
+### XLSX (aba `Prestacao_Contas`)
+
+Formato padrao (lote ou fallback):
+
+`Data`, `Pesquisador`, `Empresa`, `CNPJ`, `Descricao`, `Rubrica`, `Produto`, `Valor total`, `Moeda`.
+
+Formato estruturado (normalmente quando ha 1 nota e OCR detalhado):
+
+`DATA`, `PRODUTO`, `VALOR`, `TOTAL`.
+
+---
+
+## Automacao local (README + deploy GitHub)
+
+Sim, da para automatizar localmente (estilo "cron" no Windows) usando PowerShell + Agendador de Tarefas.
+
+1. Crie um script de auto deploy (exemplo em `scripts/auto_deploy.ps1`).
+2. Agende no Windows para rodar periodicamente.
+3. O script faz: `git pull --rebase` -> `git add -A` -> `git commit` (se houver mudancas) -> `git push`.
+
+Exemplo de agendamento diario as 18h:
+
+```powershell
+schtasks /Create /SC DAILY /TN "NotasFiscais-AutoDeploy" /TR "powershell -ExecutionPolicy Bypass -File C:\Users\Operador\Documents\Gabriela\SummerSchool\notas_fiscais\scripts\auto_deploy.ps1" /ST 18:00
+```
+
+Para remover a tarefa:
+
+```powershell
+schtasks /Delete /TN "NotasFiscais-AutoDeploy" /F
+```
 
 ---
 
